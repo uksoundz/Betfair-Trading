@@ -146,3 +146,9 @@ class TradeIdea:
     plan: list  # list[PlanStep] - structured trading plan (phase, text)
     rationale: list[str]  # bullet points explaining the numbers
     warnings: list[str] = field(default_factory=list)
+    scenarios: list = field(default_factory=list)  # [{"label","prob","profit"}] every way the match can go
+
+    @property
+    def stars(self) -> int:
+        s = self.score
+        return 5 if s >= 58 else 4 if s >= 54 else 3 if s >= 50 else 2 if s >= 46 else 1

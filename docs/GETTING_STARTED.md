@@ -8,21 +8,29 @@ the code. Stages 2 and 3 are optional upgrades you can do later.
 ## The app
 
 Once installed, double-click **`app.bat`** (or type `tradescout app`). Your browser opens on
-TradeScout:
+TradeScout. Keep the black window open while you use it.
 
-* **Pick any date** with the calendar at the top: today, this weekend, next month, or a past
-  Saturday. Press **Scan this day**.
-* **Matches**: every fixture with its best score. Click one for the model's view in plain English,
-  then each strategy that fits with a colour-coded plan: Before kick-off, In play, Get out, Stop loss,
-  and a Why section.
-* **Top picks**: the day's ranked shortlist. Choose how many, one per match or not, and whether to
-  rank by score, chance of paying off, expected return or market edge.
-* **By strategy**: pick Lay the Draw (or any other) and see which matches suit it today, plus when to
-  use it and when to avoid it.
-* **Past dates** show the real result and whether each plan paid off, so you can check the tool
-  against reality before risking anything.
+* **Top picks** is the home screen: the day's ranked shortlist, with a star rating, how often the
+  plan pays off, the return, the stake in pounds and the first instruction. Click one to open it.
+* **Day strip**: the next ten days with the number of games on each. Click a day. The calendar
+  box takes any date, past or future. If today is blank the app jumps to the next match day.
+* **Matches**: every fixture. Click one for the model's view in plain English, then every strategy
+  that fits with a colour-coded plan: Before kick-off, In play, Get out, Stop loss, and Why, plus a
+  table of every way the match can go.
+* **By strategy**: pick a strategy and see which matches suit it today, with when to use it and
+  when to avoid it.
+* **My picks**: press **+ Track this pick** on any plan and it is logged. Press **Update results**
+  and tracked picks settle themselves against the real scores. This is your paper-trading record.
+* **Settings**: paste your football-data.org key (free) for live fixtures, and later your Betfair
+  details for real prices. Each has a **Test** button. Set your bank and staking style here too.
+* **Past dates** show the real result and whether each plan paid off.
 
-Keep the black window open while you use the app; close it to stop.
+### Set up in the app (instead of setup.bat)
+
+1. Register at https://www.football-data.org/client/register and copy the code from their email.
+2. In the app go to **Settings**, paste it under *Fixtures feed*, press **Save**, then **Test connection**.
+3. Later, for real prices: create a Betfair Application Key (see Settings for the link), enter it
+   with your Betfair username and password, **Save**, then **Test login**.
 
 ## Stage 1: run it on the built-in data (10 minutes)
 

@@ -53,7 +53,11 @@ LEAGUE_NAMES: dict[str, str] = {
     "es.1": "La Liga",
     "it.1": "Serie A",
     "fr.1": "Ligue 1",
+    "nl.1": "Eredivisie",
+    "pt.1": "Primeira Liga",
+    "uefa.cl": "Champions League",
 }
+JOURNAL_PATH = REPO_ROOT / "data" / "journal.json"
 
 
 @dataclass
@@ -66,11 +70,11 @@ class Settings:
     betfair_password: str | None = field(default_factory=lambda: os.getenv("BETFAIR_PASSWORD"))
     cache_dir: Path = field(default_factory=lambda: Path(os.getenv("TRADESCOUT_CACHE", REPO_ROOT / ".cache")))
     # Model hyper-parameters
-    time_decay_xi: float = float(os.getenv("TRADESCOUT_XI", "0.0045"))  # per day; ~half-life 154 days
-    history_days: int = int(os.getenv("TRADESCOUT_HISTORY_DAYS", "900"))
+    time_decay_xi: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_XI", "0.0045")))  # per day; ~half-life 154 days
+    history_days: int = field(default_factory=lambda: int(os.getenv("TRADESCOUT_HISTORY_DAYS", "900")))
     max_goals: int = 8
-    bank: float = float(os.getenv("TRADESCOUT_BANK", "1000"))
-    kelly_fraction: float = float(os.getenv("TRADESCOUT_KELLY", "0.25"))
+    bank: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_BANK", "1000")))
+    kelly_fraction: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_KELLY", "0.25")))
 
     @property
     def has_live_fixtures(self) -> bool:
@@ -82,3 +86,24 @@ class Settings:
 
 
 settings = Settings()
+
+
+def write_env(values: dict[str, str | None], path: Path = ENV_FILE) -> None:
+    """Merge values into .env (None removes a key) and reload `settings` in place so every module
+    that imported it sees the change."""
+    current: dict[str, str] = {}
+    if path.exists():
+        for line in path.read_text().splitlines():
+            if "=" in line and not line.strip().startswith("#"):
+                k, v = line.split("=", 1)
+                current[k.strip()] = v.strip()
+    for k, v in values.items():
+        if v is None or v == "":
+            current.pop(k, None)
+            os.environ.pop(k, None)
+        else:
+            current[k] = str(v)
+            os.environ[k] = str(v)
+    lines = ["# TradeScout settings - keep this file private"] + [f"{k}={v}" for k, v in current.items()]
+    path.write_text("\n".join(lines) + "\n")
+    settings.__dict__.update(vars(Settings()))

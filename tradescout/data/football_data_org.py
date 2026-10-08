@@ -28,6 +28,14 @@ COMPETITIONS = {  # openfootball code -> football-data.org code
 REVERSE = {v: k for k, v in COMPETITIONS.items()}
 
 
+class RateLimited(RuntimeError):
+    """The free plan allows 10 requests a minute."""
+
+
+class BadApiKey(RuntimeError):
+    pass
+
+
 class FootballDataOrgProvider:
     def __init__(self, api_key: str, timeout: int = 20):
         self.session = requests.Session()
@@ -36,8 +44,32 @@ class FootballDataOrgProvider:
 
     def _get(self, path: str, **params) -> dict:
         r = self.session.get(f"{BASE}{path}", params=params, timeout=self.timeout)
+        if r.status_code == 429:
+            raise RateLimited("football-data.org limit reached (10 requests a minute on the free plan). Wait a minute and try again.")
+        if r.status_code in (400, 401, 403):
+            raise BadApiKey(f"football-data.org rejected the request ({r.status_code}). Check the API key in Settings.")
         r.raise_for_status()
         return r.json()
+
+    def ping(self) -> dict:
+        """Cheap connectivity test: fixtures over the next 3 days."""
+        counts = self.upcoming(date.today(), 3)
+        return {"ok": True, "fixtures_next_3_days": sum(counts.values()), "days": {d.isoformat(): n for d, n in counts.items()}}
+
+    def finished_matches(self, league: str) -> list[MatchResult]:
+        """All finished matches of the current season for one competition (one request)."""
+        code = COMPETITIONS[league]
+        payload = self._get(f"/competitions/{code}/matches", status="FINISHED")
+        out: list[MatchResult] = []
+        for m in payload.get("matches", []):
+            ft = (m.get("score") or {}).get("fullTime") or {}
+            if ft.get("home") is None or ft.get("away") is None:
+                continue
+            ht = (m.get("score") or {}).get("halfTime") or {}
+            d = datetime.fromisoformat(m["utcDate"].replace("Z", "+00:00")).astimezone(UK_TZ).date()
+            out.append(MatchResult(d, league, canonical(m["homeTeam"]["name"]), canonical(m["awayTeam"]["name"]),
+                                   int(ft["home"]), int(ft["away"]), ht.get("home"), ht.get("away")))
+        return out
 
     @staticmethod
     def parse_fixtures(payload: dict, on: date) -> list[Fixture]:

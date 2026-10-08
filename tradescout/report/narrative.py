@@ -61,12 +61,12 @@ def match_summary(fc: MatchForecast) -> list[str]:
 
 
 def idea_verdict(hit: float, roi: float, edge: float | None, score: float) -> str:
-    if score >= 60:
+    if score >= 54:
         head = "Strong candidate."
     elif score >= 50:
-        head = "Worth a look."
-    elif score >= 42:
-        head = "Marginal."
+        head = "Good trade at the right price."
+    elif score >= 46:
+        head = "Fair. Only enter at the price shown or better."
     else:
         head = "Leave it."
     tail = f" The plan pays off about {hit:.0%} of the time for an expected {roi:+.1%} return per unit risked"

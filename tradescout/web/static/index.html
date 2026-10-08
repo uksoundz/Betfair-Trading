@@ -4,58 +4,60 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TradeScout</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%234f8cff'/%3E%3Cpath d='M9 20l5-6 4 4 5-8' stroke='%23fff' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 <header class="top">
-  <div class="brand">⚽ TradeScout</div>
-  <div class="datebar">
-    <button id="prev" title="Previous day">‹</button>
-    <input type="date" id="date">
-    <button id="next" title="Next day">›</button>
-    <button id="today" class="ghost">Today</button>
-    <button id="go" class="primary">Scan this day</button>
+  <div class="brandrow">
+    <div class="brand"><span class="logo"></span>TradeScout <span class="tag">football trading research</span></div>
+    <div class="pills" id="pills"></div>
   </div>
-  <div class="status" id="status"></div>
+  <div class="datebar">
+    <button id="prev" title="Previous day" class="icon">‹</button>
+    <input type="date" id="date" title="Pick any date, past or future">
+    <button id="next" title="Next day" class="icon">›</button>
+    <button id="today" class="ghost">Today</button>
+    <button id="go" class="primary" title="Re-run the scan for this day">Refresh</button>
+    <span class="meta" id="scanmeta"></span>
+  </div>
   <div class="daystrip" id="daystrip"></div>
 </header>
 
 <nav class="tabs">
-  <button class="tab active" data-view="matches">Matches</button>
-  <button class="tab" data-view="picks">Top picks</button>
+  <button class="tab active" data-view="picks">Top picks</button>
+  <button class="tab" data-view="matches">Matches</button>
   <button class="tab" data-view="strategies">By strategy</button>
-  <button class="tab" data-view="help">How to use</button>
+  <button class="tab" data-view="journal">My picks <span class="count" id="journalCount"></span></button>
+  <button class="tab" data-view="settings">Settings</button>
+  <button class="tab" data-view="help">Help</button>
 </nav>
 
 <main>
-  <section id="view-matches" class="view active">
+  <div id="banner"></div>
+
+  <section id="view-picks" class="view active">
+    <div class="toolbar">
+      <label>Show <select id="picksCount"><option>5</option><option selected>10</option><option>20</option><option>50</option></select> best ideas</label>
+      <label><input type="checkbox" id="picksPerMatch" checked> one per match</label>
+      <label>ranked by <select id="picksSort"><option value="score">overall score</option><option value="hit">chance of paying off</option><option value="roi">expected return</option><option value="edge">market edge</option></select></label>
+      <label>minimum <select id="picksMin"><option value="0">any rating</option><option value="2" selected>★★ and up</option><option value="3">★★★ and up</option><option value="4">★★★★ and up</option></select></label>
+    </div>
+    <div id="picks"></div>
+  </section>
+
+  <section id="view-matches" class="view">
     <div class="split">
       <aside class="list">
         <div class="filters">
           <input id="search" placeholder="Search team…">
           <select id="leagueFilter"><option value="">All leagues</option></select>
-          <select id="sort">
-            <option value="score">Sort: best score</option>
-            <option value="time">Sort: kick-off</option>
-            <option value="goals">Sort: most goals expected</option>
-          </select>
+          <select id="sort"><option value="score">Sort: best rating</option><option value="time">Sort: kick-off</option><option value="goals">Sort: most goals expected</option></select>
         </div>
         <div id="matchList"></div>
       </aside>
-      <article class="detail" id="detail">
-        <div class="empty">Pick a date and press <b>Scan this day</b>, then click a match.</div>
-      </article>
+      <article class="detail" id="detail"><div class="empty">Click a match to see the model's view and every strategy plan.</div></article>
     </div>
-  </section>
-
-  <section id="view-picks" class="view">
-    <div class="toolbar">
-      <label>Show <select id="picksCount"><option>5</option><option selected>10</option><option>20</option></select> best ideas,</label>
-      <label><input type="checkbox" id="picksPerMatch" checked> one per match,</label>
-      <label>ranked by <select id="picksSort"><option value="score">score</option><option value="hit">chance of paying off</option><option value="roi">expected return</option><option value="edge">market edge</option></select></label>
-    </div>
-    <div id="picks"></div>
   </section>
 
   <section id="view-strategies" class="view">
@@ -64,30 +66,80 @@
     <div id="stratList"></div>
   </section>
 
+  <section id="view-journal" class="view">
+    <div class="toolbar">
+      <button id="settleBtn" class="primary">Update results</button>
+      <span class="meta">Picks you track are settled automatically against real results as they come in. Use this as your paper-trading record before risking money.</span>
+    </div>
+    <div class="grid" id="journalSummary"></div>
+    <div id="journalList"></div>
+  </section>
+
+  <section id="view-settings" class="view">
+    <div class="split2">
+      <div class="card">
+        <h2>Fixtures feed <span class="light" id="lightFixtures"></span></h2>
+        <p class="meta">Free. Gives you today's and future fixtures for the Premier League, Championship, Bundesliga, La Liga, Serie A, Ligue 1, Eredivisie, Primeira Liga and Champions League, plus fresh results for the ratings.</p>
+        <ol class="meta">
+          <li>Register at <a href="https://www.football-data.org/client/register" target="_blank" rel="noopener">football-data.org/client/register</a> (name and email).</li>
+          <li>The email they send contains a long code. Paste it here and press Save.</li>
+        </ol>
+        <label class="field">API key <input id="fdKey" placeholder="paste the code from the email"></label>
+        <div class="row"><button class="primary" id="saveFd">Save</button><button id="testFd">Test connection</button><button class="ghost danger" id="clearFd">Remove</button><span class="meta" id="fdResult"></span></div>
+      </div>
+      <div class="card">
+        <h2>Betfair prices <span class="light" id="lightBetfair"></span></h2>
+        <p class="meta">Optional but important: with Betfair connected the app compares its own numbers with the real exchange price and shows the <b>Edge</b>. That is where profit comes from.</p>
+        <ol class="meta">
+          <li>You need a funded Betfair account.</li>
+          <li>Follow <a href="https://developer.betfair.com/get-started/" target="_blank" rel="noopener">developer.betfair.com/get-started</a> to create an Application Key. The free <b>Delayed</b> key is fine to start.</li>
+          <li>Enter the key plus your Betfair username and password. They are stored only on this computer, in the .env file next to the app.</li>
+        </ol>
+        <label class="field">Application key <input id="bfKey" placeholder="e.g. aBcDeFgHiJkLmNoP"></label>
+        <label class="field">Username <input id="bfUser" autocomplete="off"></label>
+        <label class="field">Password <input id="bfPass" type="password" autocomplete="new-password"></label>
+        <div class="row"><button class="primary" id="saveBf">Save</button><button id="testBf">Test login</button><button class="ghost danger" id="clearBf">Remove</button><span class="meta" id="bfResult"></span></div>
+      </div>
+      <div class="card">
+        <h2>Staking</h2>
+        <p class="meta">Stake suggestions are a fraction of the mathematically optimal (Kelly) stake, capped at 5% of bank. Smaller is safer.</p>
+        <label class="field">Bank (£) <input id="bank" type="number" min="10" step="10"></label>
+        <label class="field">Style <select id="kelly"><option value="0.1">Cautious (10% Kelly)</option><option value="0.25">Standard (25% Kelly)</option><option value="0.5">Aggressive (50% Kelly)</option></select></label>
+        <div class="row"><button class="primary" id="saveStake">Save</button><span class="meta" id="stakeResult"></span></div>
+      </div>
+      <div class="card">
+        <h2>Data</h2>
+        <div class="meta" id="dataInfo"></div>
+      </div>
+    </div>
+  </section>
+
   <section id="view-help" class="view">
     <div class="card prose">
       <h2>How to use TradeScout</h2>
       <ol>
-        <li><b>Pick a day</b> at the top and press <b>Scan this day</b>. Any day works: today, this weekend, or a past Saturday to see how the picks did.</li>
-        <li><b>Matches</b> lists every fixture with its best score. Click one for the full breakdown: the model's view of the match, then every strategy that fits with a step-by-step plan.</li>
-        <li><b>Top picks</b> is the ranked shortlist across the whole day. Start here each morning.</li>
-        <li><b>By strategy</b> answers "which matches suit lay-the-draw today?" and tells you when a strategy should and should not be used.</li>
+        <li><b>Set up once</b> in <b>Settings</b>: paste your free football-data.org key for live fixtures. Add Betfair when you are ready to see real prices and edge.</li>
+        <li><b>Each day</b>: open the app, it shows the next day with matches. <b>Top picks</b> is the ranked shortlist for that day. Click a pick to open the full plan.</li>
+        <li><b>Matches</b> lists every fixture. Click one for the model's view in plain English and every strategy that fits.</li>
+        <li><b>By strategy</b> answers "which matches suit lay the draw today?" and tells you when a strategy should and should not be used.</li>
+        <li><b>Track</b> the picks you like. <b>My picks</b> settles them automatically against the real results and keeps your strike rate, profit and return. Paper trade for a few weeks before staking real money.</li>
       </ol>
       <h3>Reading a plan</h3>
-      <p>Each plan is split into <span class="ph entry">Before kick-off</span> (what to place and at what price), <span class="ph inplay">In play</span> (what to wait for), <span class="ph exit">Get out</span> (how to take profit) and <span class="ph stop">Stop loss</span> (when to cut and run). The "Why" section is the model's reasoning in plain words. The scenario table shows every way the match can go, how likely it is, and what you make or lose in each case.</p>
-      <h3>The numbers</h3>
+      <p>Each plan has <span class="ph entry">Before kick-off</span> (what to place and the price), <span class="ph inplay">In play</span> (what to wait for), <span class="ph exit">Get out</span> (how to take profit), <span class="ph stop">Stop loss</span> (when to cut) and <b>Why</b>, the reasoning behind the numbers. The scenario table shows every way the match can go, how likely each is and what you make or lose.</p>
+      <h3>Ratings</h3>
       <ul>
-        <li><b>Score</b> 0-100. 50 is break-even after costs. Green at 60+, amber 50-60, grey below.</li>
-        <li><b>Pays off</b> the probability the plan ends in profit, adjusted by how this strategy has really performed in this league.</li>
-        <li><b>Return</b> expected profit per £1 risked. <b>Stake</b> is a deliberately small suggestion based on your bank.</li>
-        <li><b>Edge</b> how much better the exchange price is than the model's fair price. Only shown when Betfair is connected. This is where profit comes from, so connect Betfair as soon as you are comfortable.</li>
-        <li><b>Confidence</b> how much recent data sits behind both teams. Treat anything under 0.5 with care.</li>
+        <li><b>★★★★★ / ★★★★</b> strong: the expected return after costs is clearly positive.</li>
+        <li><b>★★★</b> good at the price shown or better. <b>★★</b> fair, marginal. <b>★</b> leave it.</li>
+        <li><b>Pays off</b> is how often this plan ends in profit, adjusted by how the strategy has really performed in this league over two seasons of back-testing.</li>
+        <li><b>Edge</b> is how much better the exchange price is than the model's fair price. It only appears with Betfair connected. Without it, ratings are driven by the model alone and cluster around ★★ to ★★★.</li>
+        <li><b>Confidence</b> is how much recent data sits behind both teams. Treat anything under 0.5 with care (new or promoted teams, early season).</li>
       </ul>
-      <h3>Rules</h3>
+      <h3>Rules that keep you profitable</h3>
       <ul>
-        <li>Paper trade first. Scan a few past Saturdays and check the results against the plans.</li>
-        <li>Decide your exit and your stop before kick-off. The plan gives you both.</li>
-        <li>Prices in the plans are what the model expects. Real markets will differ, especially in smaller leagues. Only enter at the price shown or better.</li>
+        <li>Only enter at the plan's price or better. If the market does not offer it, there is no trade.</li>
+        <li>Decide the exit and the stop before kick-off. The plan gives you both. Follow them.</li>
+        <li>Stakes are small on purpose. Variance is the thing that ends trading careers.</li>
+        <li>Prefer liquid leagues (Premier League, La Liga, Bundesliga, Serie A, Champions League).</li>
         <li>This is research, not tips. The in-play decisions are yours.</li>
       </ul>
     </div>

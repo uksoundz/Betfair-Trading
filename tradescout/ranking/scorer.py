@@ -73,4 +73,5 @@ class Scorer:
             expected_roi=r.expected_roi, win_return=win, loss_return=loss, calibrated_hit_prob=cal_hit, calibrated_roi=float(roi_adj),
             historical_strike_rate=hist_rate, historical_sample=n_hist, confidence=fc.confidence, liquidity=liquidity,
             score=score, stake_pct=stake_pct, plan=r.plan, rationale=r.rationale, warnings=warnings,
+            scenarios=[{"label": s.label, "prob": s.prob, "profit": s.profit} for s in r.scenarios],
         )

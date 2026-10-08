@@ -38,11 +38,15 @@ breakdown for a single game.
 
 ## The app
 
-`tradescout app` (or double-click `app.bat` on Windows) opens a local web app: date picker for any
-day past or future, every match with its best score, the model's view in plain English, and for
-each strategy a plan split into Before kick-off / In play / Get out / Stop loss with the reasoning
-and a scenario table. Top picks ranks the whole day; By strategy answers "which matches suit lay
-the draw today?". Past dates show the real result and whether each plan paid off.
+`tradescout app` (or double-click `app.bat` on Windows) opens a local web app:
+
+* **Top picks**: the day's ranked shortlist with star ratings, pay-off probability, return and stake.
+* **Day strip and date picker** for any day, past or future; blank days jump to the next match day.
+* **Match view**: the model's reasoning in plain English and every strategy plan split into
+  Before kick-off / In play / Get out / Stop loss, with a full scenario table.
+* **By strategy**: which matches suit lay the draw (or any strategy) today, and when to avoid it.
+* **My picks**: a journal that settles tracked picks against real results (strike rate, P/L, ROI).
+* **Settings**: enter the football-data.org key and Betfair details in the browser, with connection tests.
 
 ## Quick start
 
