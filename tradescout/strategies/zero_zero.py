@@ -15,6 +15,7 @@ class LayZeroZero(Strategy):
     best_for = "High-scoring fixtures where 0-0 is under 8% likely and the 0-0 price is 12 or bigger. High strike rate, small wins."
     avoid_when = "Low-scoring leagues or cagey derbies where 0-0 is 12%+; the occasional loss then wipes many wins."
     needs_prices = ("correct_scores",)
+    settlement = "approximate"
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         p00 = fc.p_cs.get("0-0", 0.0)
@@ -40,7 +41,7 @@ class LayZeroZero(Strategy):
         ]
         return StrategyResult("Correct Score", "lay", "0-0", hit, 1 / p00, prices.correct_scores.get("0-0") if is_market else None,
                               edge, scenarios, plan, rationale,
-                              orders=[OrderLeg("CORRECT_SCORE", "0-0", "lay", round(price, 1), 1.0, "liability", "lay 0-0 pre-match")])
+                              orders=[OrderLeg("CORRECT_SCORE", "0-0", "lay", round(price, 1), 1.0, "liability", "lay 0-0 pre-match", p_model=p00)])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p00 = fc.p_cs.get("0-0", 0.0)

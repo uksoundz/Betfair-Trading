@@ -15,6 +15,8 @@ class CorrectScoreBasket(Strategy):
     best_for = "Matches with a clear most-likely outcome where the top five scores cover 50%+; liquid leagues only."
     avoid_when = "Thin correct-score markets, very open games where probability is spread across many scores."
     needs_prices = ("correct_scores",)
+    inplay = False
+    enabled_default = False  # -13% model-synthetic ROI: a 10% correct-score overround is not beaten by this model
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         ranked = sorted(fc.p_cs.items(), key=lambda kv: -kv[1])[:BASKET_SIZE]
@@ -48,7 +50,7 @@ class CorrectScoreBasket(Strategy):
         ]
         return StrategyResult("Correct Score", "back", legs[0][0], covered, 1 / legs[0][1],
                               prices.correct_scores.get(legs[0][0]) if any_market else None, edge, scenarios, plan, rationale,
-                              orders=[OrderLeg("CORRECT_SCORE", s, "back", round(pr, 1), (1 / pr) / book, "stake", f"{p:.0%} model") for s, p, pr in legs])
+                              orders=[OrderLeg("CORRECT_SCORE", s, "back", round(pr, 1), (1 / pr) / book, "stake", f"{p:.0%} model", p_model=p) for s, p, pr in legs])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         ranked = sorted(fc.p_cs.items(), key=lambda kv: -kv[1])[:BASKET_SIZE]

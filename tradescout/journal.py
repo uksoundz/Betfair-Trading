@@ -41,6 +41,9 @@ class JournalEntry:
     placed: str = ""  # "" | paper | live
     bet_refs: list = field(default_factory=list)  # exchange bet ids when placed live
     placed_total: float = 0.0  # money committed on the exchange (back stakes + lay liabilities)
+    sport: str = "football"
+    decision: str = ""  # TRADE | NO TRADE | RESEARCH at the time it was tracked
+    ev_conservative: Optional[float] = None
 
 
 @dataclass
@@ -67,7 +70,9 @@ class Journal:
                 return e
         e = JournalEntry(uuid.uuid4().hex[:10], datetime.now().isoformat(timespec="minutes"), fx.date.isoformat(), fx.league, fx.home, fx.away,
                          idea.strategy, idea.strategy_label, round(idea.score, 1), round(idea.calibrated_hit_prob, 3),
-                         round(idea.market_price or idea.model_price, 2), round(stake_money, 2), idea.plan[0].text if idea.plan else "", note=note)
+                         round(idea.market_price or idea.model_price, 2), round(stake_money, 2), idea.plan[0].text if idea.plan else "", note=note,
+                         sport=getattr(idea, "sport", "football"), decision=getattr(idea, "decision", ""),
+                         ev_conservative=getattr(idea, "ev_conservative", None))
         self.entries.insert(0, e)
         self.save()
         return e
@@ -96,30 +101,49 @@ class Journal:
         return False
 
     def settle(self, scout, result_lookup) -> int:
-        """Settle open entries whose match has a result. Returns how many were settled."""
+        """Settle open football entries (kept for compatibility); see settle_multi."""
+        return self.settle_multi({"football": scout}, lambda sport, fx: result_lookup(fx))
+
+    def settle_multi(self, scouts: dict, result_lookup) -> int:
+        """Settle open entries of every sport whose match has a result. result_lookup(sport, fixture).
+        Returns how many were settled. P/L uses the strategy's own settle(): exact for plans settled
+        at the result, modelled exits for in-play plans (flagged in the note)."""
         from .strategies import get_strategy
         settled = 0
-        forecasters: dict[str, object] = {}
+        forecasters: dict[tuple, object] = {}
         for e in self.entries:
             if e.status != "open" or date.fromisoformat(e.date) > date.today():
                 continue
-            fx = Fixture(date.fromisoformat(e.date), e.league, e.home, e.away)
-            result = result_lookup(fx)
+            sport = e.sport or ("tennis" if e.strategy.startswith("tn_") else "football")
+            scout = scouts.get(sport)
+            if scout is None:
+                continue
+            meta = {"sport": sport}
+            if sport == "tennis" and e.slip:
+                pass
+            fx = Fixture(date.fromisoformat(e.date), e.league, e.home, e.away, None, None, meta)
+            result = result_lookup(sport, fx)
             if result is None:
                 continue
-            fc_aster = forecasters.get(e.date)
+            if sport == "tennis":
+                fx = Fixture(fx.date, fx.league, fx.home, fx.away, None, None,
+                             {"sport": "tennis", "surface": getattr(result, "surface", "Hard"), "best_of": getattr(result, "best_of", 3)})
+            fc_aster = forecasters.get((sport, e.date))
             if fc_aster is None:
                 try:
                     fc_aster = scout.forecaster(fx.date)
                 except Exception:
                     continue
-                forecasters[e.date] = fc_aster
+                forecasters[(sport, e.date)] = fc_aster
             fc = fc_aster.forecast(fx)
-            hit, pnl = get_strategy(e.strategy).settle(fc, result)
+            strat = get_strategy(e.strategy)
+            hit, pnl = strat.settle(fc, result)
             e.pnl_per_unit = round(pnl, 4)
             e.pnl_money = round(pnl * e.stake_money, 2)
             e.status = "won" if hit >= 0.5 else "lost"
-            e.result = f"{result.home_goals}-{result.away_goals}"
+            e.result = getattr(result, "score", None) or f"{result.home_goals}-{result.away_goals}"
+            if getattr(strat, "inplay", True) and "modelled exits" not in e.note:
+                e.note = (e.note + "; " if e.note else "") + "P/L uses modelled in-play exits"
             settled += 1
         if settled:
             self.save()

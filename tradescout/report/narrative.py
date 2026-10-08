@@ -60,16 +60,12 @@ def match_summary(fc: MatchForecast) -> list[str]:
     return out
 
 
-def idea_verdict(hit: float, roi: float, edge: float | None, score: float) -> str:
-    if score >= 54:
-        head = "Strong candidate."
-    elif score >= 50:
-        head = "Good trade at the right price."
-    elif score >= 46:
-        head = "Fair. Only enter at the price shown or better."
+def idea_verdict(hit: float, roi: float, edge: float | None, score: float, decision: str = "RESEARCH", ev_cons: float | None = None) -> str:
+    if decision == "TRADE":
+        head = f"TRADE. Conservative net edge {ev_cons:+.1%} per unit risked after commission." if ev_cons is not None else "TRADE."
+    elif decision == "NO TRADE":
+        head = "NO TRADE: no proven advantage at the current exchange price" + (f" (conservative edge {ev_cons:+.1%})." if ev_cons is not None else ".")
     else:
-        head = "Leave it."
-    tail = f" The plan pays off about {hit:.0%} of the time for an expected {roi:+.1%} return per unit risked"
-    if edge is not None:
-        tail += f", and the exchange price is {'better' if edge > 0 else 'worse'} than the model's fair price by {abs(edge):.1%}"
-    return head + tail + "."
+        head = "RESEARCH ONLY: no exchange price, so no advantage can be claimed."
+    tail = f" The plan pays off about {hit:.0%} of the time; modelled return {roi:+.1%} per unit risked."
+    return head + tail

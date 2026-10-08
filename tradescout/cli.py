@@ -63,7 +63,22 @@ def _explain_no_fixtures(on: date, scout: Scout, sample: OpenFootballProvider, l
         print("Tip: run  tradescout setup  and enter a football-data.org key to scan live fixtures.")
 
 
+def cmd_holdout(args) -> int:
+    from .eval.holdout import run
+    run(verbose=True)
+    return 0
+
+
 def cmd_scan(args) -> int:
+    if getattr(args, "sport", "football") == "tennis":
+        from .tennis.data import TennisProvider
+        from .tennis.scout import TennisScout
+        tp = TennisProvider()
+        scan = TennisScout(tp, tp).scan(_date(args.date))
+        print(f"Tennis {scan.date}: {len(scan.fixtures)} matches, {len(scan.ideas)} ideas (research only without Betfair)")
+        for i in scan.top(args.top):
+            print(f"  {i.decision:9s} {i.score:5.1f} {i.fixture.label:42s} {i.strategy_label:40s} pays off {i.calibrated_hit_prob:.0%}  plan ROI {i.calibrated_roi:+.1%}")
+        return 0
     scout, sample = build_scout(args)
     on = _date(args.date)
     if not args.offline and not args.date:
@@ -200,6 +215,7 @@ def main(argv=None) -> int:
 
     s = sub.add_parser("scan", help="rank today's fixtures")
     s.add_argument("--date", help="YYYY-MM-DD (default today)")
+    s.add_argument("--sport", choices=["football", "tennis"], default="football")
     s.add_argument("--top", type=int, default=25)
     s.add_argument("--min-score", type=float, default=0.0)
     s.add_argument("--per-match", action="store_true", help="show only the best idea per match")
@@ -236,6 +252,9 @@ def main(argv=None) -> int:
 
     st = sub.add_parser("setup", help="enter your API keys once; saved to .env")
     st.set_defaults(func=cmd_setup)
+
+    ho = sub.add_parser("holdout", help="out-of-sample protocol: calibrate on tuning seasons, report the holdout for both sports")
+    ho.set_defaults(func=cmd_holdout)
 
     rf = sub.add_parser("refresh-data", help="download season files from openfootball")
     rf.add_argument("--seasons", nargs="*", default=None, help="e.g. 2025-26 2026-27 (default: current season)")

@@ -65,6 +65,7 @@ class OrderLeg:
     fraction: float = 1.0
     sizing: str = "stake"  # stake | liability
     note: str = ""
+    p_model: float = 0.0  # model probability that this selection wins (used by the value engine)
 
 
 @dataclass
@@ -122,6 +123,9 @@ class Strategy:
     best_for: str = ""      # plain-English: the kind of match this suits
     avoid_when: str = ""    # plain-English: when to leave it alone
     needs_prices: tuple[str, ...] = ()
+    enabled_default: bool = True   # weak or unverifiable strategies ship disabled; users can enable in Settings
+    settlement: str = "exact"      # exact (settles on the final result) | approximate (exits modelled, event timing inferred) | unverifiable
+    inplay: bool = True            # needs in-play action after entry
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         raise NotImplementedError

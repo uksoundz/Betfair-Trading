@@ -43,6 +43,14 @@ LEAGUE_LIQUIDITY: dict[str, float] = {
     "be.1": 0.50,
     "tr.1": 0.50,
     "sco.1": 0.55,
+    # tennis (ATP singles)
+    "atp.gs": 1.00,
+    "atp.1000": 0.85,
+    "atp.finals": 0.90,
+    "atp.500": 0.65,
+    "atp.250": 0.50,
+    "atp.olympics": 0.70,
+    "atp.tour": 0.50,
 }
 DEFAULT_LIQUIDITY = 0.40
 
@@ -56,7 +64,17 @@ LEAGUE_NAMES: dict[str, str] = {
     "nl.1": "Eredivisie",
     "pt.1": "Primeira Liga",
     "uefa.cl": "Champions League",
+    "atp.gs": "Grand Slam",
+    "atp.1000": "ATP Masters 1000",
+    "atp.500": "ATP 500",
+    "atp.250": "ATP 250",
+    "atp.finals": "ATP Finals",
+    "atp.olympics": "Olympics",
+    "atp.tour": "ATP Tour",
 }
+SPORTS = {"football": "Football", "tennis": "Tennis (ATP)"}
+FOOTBALL_LEAGUES = [k for k in LEAGUE_NAMES if not k.startswith("atp.")]
+TENNIS_LEAGUES = [k for k in LEAGUE_NAMES if k.startswith("atp.")]
 JOURNAL_PATH = REPO_ROOT / "data" / "journal.json"
 
 
@@ -70,7 +88,10 @@ class Settings:
     betfair_password: str | None = field(default_factory=lambda: os.getenv("BETFAIR_PASSWORD"))
     cache_dir: Path = field(default_factory=lambda: Path(os.getenv("TRADESCOUT_CACHE", REPO_ROOT / ".cache")))
     # Model hyper-parameters
-    time_decay_xi: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_XI", "0.0045")))  # per day; ~half-life 154 days
+    time_decay_xi: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_XI", "0.003")))  # per day; tuned out of sample
+    commission: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_COMMISSION", "0.05")))  # Betfair UK base rate on net market winnings
+    min_edge: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_MIN_EDGE", "0.02")))  # conservative net EV per unit risked needed to call a trade
+    max_spread: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_MAX_SPREAD", "0.04")))  # (lay - back) / back
     history_days: int = field(default_factory=lambda: int(os.getenv("TRADESCOUT_HISTORY_DAYS", "900")))
     max_goals: int = 8
     bank: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_BANK", "1000")))

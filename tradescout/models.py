@@ -44,6 +44,10 @@ class Fixture:
     away: str
     kickoff: Optional[datetime] = None
     fixture_id: Optional[str] = None
+    meta: dict = field(default_factory=dict)  # sport-specific extras (tennis: surface, best_of, tourney)
+
+    def __hash__(self):
+        return hash((self.date, self.league, self.home, self.away))
 
     @property
     def label(self) -> str:
@@ -69,10 +73,16 @@ class MarketPrices:
     correct_scores: dict[str, float] = field(default_factory=dict)  # "1-1" -> odds
     source: str = "none"
     total_matched: Optional[float] = None  # GBP matched on the match odds market (liquidity)
+    quotes: dict = field(default_factory=dict)  # "MARKET_TYPE:selection" -> value.Quote (ladders, matched, timestamp)
+    as_of: Optional[str] = None  # ISO timestamp of the price snapshot
 
     @property
     def available(self) -> bool:
         return self.source != "none" and self.home is not None
+
+    def quote(self, market: str, selection: str):
+        """Quote for an order leg. Selection keys: home/away/draw for MATCH_ODDS, runner names otherwise."""
+        return self.quotes.get(f"{market}:{selection}")
 
 
 @dataclass
@@ -148,6 +158,21 @@ class TradeIdea:
     warnings: list[str] = field(default_factory=list)
     scenarios: list = field(default_factory=list)  # [{"label","prob","profit"}] every way the match can go
     orders: list = field(default_factory=list)  # [OrderLeg] the pre-match selections this plan needs
+    # --- exchange-aware assessment (value.py) ---
+    decision: str = "RESEARCH"            # TRADE | NO TRADE | RESEARCH (no exchange price)
+    decision_reasons: list = field(default_factory=list)
+    evidence: str = "model-synthetic"     # how the plan's return is established: exchange-priced-static | simulated-inplay | model-synthetic
+    p_conservative: Optional[float] = None  # market-shrunk probability the entry selection wins
+    ev_conservative: Optional[float] = None  # conservative net EV per unit risked on the entry leg(s), after commission
+    ev_model: Optional[float] = None      # net EV on the raw model probability (for comparison only)
+    p_market: Optional[float] = None      # market-implied probability of the entry selection
+    execution: float = 0.0                # 0..1 fill / spread / liquidity quality
+    legs: list = field(default_factory=list)  # per-leg value assessments (dicts)
+    max_loss_per_unit: float = 1.0        # worst-case loss per unit risked across the plan
+    stake_money: float = 0.0              # risk engine's suggested stake in money
+    risk_money: float = 0.0               # money at risk for that stake
+    risk_notes: list = field(default_factory=list)
+    sport: str = "football"
 
     @property
     def stars(self) -> int:

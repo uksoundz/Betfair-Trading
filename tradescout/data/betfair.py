@@ -8,12 +8,13 @@ best lay price for lay-side ones is exposed through `lay_prices`.
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
 
 from ..models import Fixture, MarketPrices
+from ..value import Quote
 from .names import names_match
 
 LOGIN = "https://identitysso.betfair.com/api/login"
@@ -150,20 +151,38 @@ class BetfairPrices:
         books = self._rpc("listMarketBook", {"marketIds": [c["marketId"] for c in cats],
                                              "priceProjection": {"priceData": ["EX_BEST_OFFERS"]}})
         by_id = {b["marketId"]: b for b in books}
-        mp = MarketPrices(source="betfair")
+        mp = MarketPrices(source="betfair", as_of=datetime.now(timezone.utc).isoformat(timespec="seconds"))
         self.lay_prices: dict[str, float] = {}
         for cat in cats:
             book = by_id.get(cat["marketId"])
             if not book:
                 continue
             mtype = cat["description"]["marketType"]
-            runners = {r["selectionId"]: r["runnerName"] for r in cat["runners"]}
+            runners = {r["selectionId"]: r for r in cat["runners"]}
             if mtype == "MATCH_ODDS":
                 mp.total_matched = book.get("totalMatched")
             for r in book.get("runners", []):
-                name = runners.get(r["selectionId"], "")
-                back = (r.get("ex", {}).get("availableToBack") or [{}])[0].get("price")
-                lay = (r.get("ex", {}).get("availableToLay") or [{}])[0].get("price")
+                meta = runners.get(r["selectionId"], {})
+                name = meta.get("runnerName", "")
+                ex = r.get("ex", {})
+                back_ladder = [(x["price"], x["size"]) for x in (ex.get("availableToBack") or []) if x.get("price")]
+                lay_ladder = [(x["price"], x["size"]) for x in (ex.get("availableToLay") or []) if x.get("price")]
+                quote = Quote(back_ladder, lay_ladder, book.get("totalMatched"), mp.as_of)
+                # selection key for the value engine: home/away/draw for match odds, runner name otherwise
+                if mtype == "MATCH_ODDS":
+                    if name == "The Draw":
+                        skey = "draw"
+                    elif names_match(name, fixture.home) or meta.get("sortPriority") == 1:
+                        skey = "home"
+                    else:
+                        skey = "away"
+                elif mtype == "CORRECT_SCORE" or mtype == "SET_BETTING":
+                    skey = name.replace(" ", "")
+                else:
+                    skey = name
+                mp.quotes[f"{mtype}:{skey}"] = quote
+                back = back_ladder[0][0] if back_ladder else None
+                lay = lay_ladder[0][0] if lay_ladder else None
                 if lay:
                     self.lay_prices[f"{mtype}:{name}"] = lay
                 if not back:

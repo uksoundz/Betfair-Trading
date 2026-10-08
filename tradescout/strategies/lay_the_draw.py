@@ -15,6 +15,7 @@ class LayTheDraw(Strategy):
     best_for = "A clear favourite that scores early and often, draw priced 3.0 or bigger, decent total goals expected."
     avoid_when = "Evenly matched sides, draw under 2.6, cagey low-scoring leagues, or a team that sits on 1-0 leads."
     needs_prices = ("draw",)
+    settlement = "approximate"
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         price, is_market = self.price_or_fair(prices.draw, fc.p_draw)
@@ -54,7 +55,7 @@ class LayTheDraw(Strategy):
             warnings.append("Evenly matched sides: equaliser risk is high, consider the 1-1 insurance variant")
         return StrategyResult("Match Odds", "lay", "The Draw", hit, 1 / fc.p_draw, prices.draw if is_market else None, edge,
                               scenarios, plan, rationale, warnings,
-                              orders=[OrderLeg("MATCH_ODDS", "draw", "lay", round(price, 2), 1.0, "liability", "lay the draw pre-match")])
+                              orders=[OrderLeg("MATCH_ODDS", "draw", "lay", round(price, 2), 1.0, "liability", "lay the draw pre-match", p_model=fc.p_draw)])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         price, _ = self.price_or_fair(None, fc.p_draw)

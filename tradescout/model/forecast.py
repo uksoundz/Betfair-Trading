@@ -29,16 +29,32 @@ def matrix_markets(m: np.ndarray) -> dict:
 
 
 class Forecaster:
-    def __init__(self, model: DixonColesModel):
+    """total_shrink pulls each match's total expected goals towards the league average:
+    total' = avg + total_shrink * (total - avg), keeping the home/away split. 1.0 = raw model.
+    The raw Dixon-Coles totals were found to be over-dispersed out of sample (see eval/)."""
+
+    def __init__(self, model: DixonColesModel, total_shrink: float = 0.7):
         self.model = model
+        self.total_shrink = total_shrink
 
     @classmethod
-    def fit(cls, results: Sequence[MatchResult], as_of: date, **kw) -> "Forecaster":
-        return cls(DixonColesModel(**kw).fit(results, as_of))
+    def fit(cls, results: Sequence[MatchResult], as_of: date, total_shrink: float = 0.7, **kw) -> "Forecaster":
+        return cls(DixonColesModel(**kw).fit(results, as_of), total_shrink)
+
+    def expected_goals(self, fixture: Fixture) -> tuple[float, float]:
+        lam, mu = self.model.expected_goals(fixture.home, fixture.away)
+        if self.total_shrink != 1.0:
+            avg = self.model.league_avg_goals.get(fixture.league) or float(np.mean(list(self.model.league_avg_goals.values()) or [2.7]))
+            total = lam + mu
+            new_total = avg + self.total_shrink * (total - avg)
+            scale = new_total / total if total > 0 else 1.0
+            lam, mu = lam * scale, mu * scale
+        return lam, mu
 
     def forecast(self, fixture: Fixture) -> MatchForecast:
         mdl = self.model
-        matrix, lam, mu = mdl.score_matrix(fixture.home, fixture.away)
+        lam, mu = self.expected_goals(fixture)
+        matrix = mdl.score_matrix_from(lam, mu)
         mk = matrix_markets(matrix)
         ht = half_time_matrix(lam, mu, mdl.rho, mdl.max_goals)
         p_hf, p_af, _ = p_team_scores_first(lam, mu)

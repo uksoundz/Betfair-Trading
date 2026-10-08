@@ -9,7 +9,7 @@ from .data.base import FixtureProvider, NoPrices, PriceProvider, ResultProvider
 from .model import Forecaster
 from .models import Fixture, MatchForecast, TradeIdea
 from .ranking import Calibration, Scorer
-from .strategies import ALL_STRATEGIES, Strategy
+from .strategies import ALL_STRATEGIES, Strategy, active_strategies
 
 
 @dataclass
@@ -41,7 +41,7 @@ class Scout:
         self.results = results
         self.fixtures = fixtures
         self.prices = prices or NoPrices()
-        self.strategies = list(strategies or ALL_STRATEGIES)
+        self.strategies = list(strategies) if strategies is not None else active_strategies()
         self.scorer = Scorer(calibration or Calibration.load())
         self.model_kw = model_kw
 
@@ -69,6 +69,6 @@ class Scout:
                 r = strat.evaluate(fc, prices)
                 if r is None:
                     continue
-                ideas.append(self.scorer.score(fx, fc, strat, r))
+                ideas.append(self.scorer.score(fx, fc, strat, r, prices=prices if prices.available else None, sport="football"))
         ideas.sort(key=lambda i: -i.score)
         return ScanResult(on, fixtures, forecasts, ideas, fcaster.model.n_matches, source, skipped)

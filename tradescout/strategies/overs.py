@@ -13,6 +13,7 @@ class BackOversWithInsurance(Strategy):
     best_for = "Two attacking sides or a big favourite against a leaky defence, 2.8+ goals expected, Over 2.5 priced 1.7 to 2.3."
     avoid_when = "Over 2.5 shorter than 1.6 (the insurance costs more than it covers) or fewer than 2.6 goals expected."
     needs_prices = ("over_25",)
+    inplay = False
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         p_over = fc.p_over[2.5]
@@ -50,8 +51,8 @@ class BackOversWithInsurance(Strategy):
             warnings.append("Total xG under 2.6: this is a marginal overs match")
         return StrategyResult("Over/Under 2.5", "back", "Over 2.5", hit, 1 / p_over, prices.over_25 if o_market else None, edge,
                               scenarios, plan, rationale, warnings,
-                              orders=[OrderLeg("OVER_UNDER_25", "Over 2.5 Goals", "back", round(o_price, 2), w_over, "stake", "main leg"),
-                                      OrderLeg("CORRECT_SCORE", "1-1", "back", round(c_price, 2), w_ins, "stake", "insurance leg")])
+                              orders=[OrderLeg("OVER_UNDER_25", "Over 2.5 Goals", "back", round(o_price, 2), w_over, "stake", "main leg", p_model=p_over),
+                                      OrderLeg("CORRECT_SCORE", "1-1", "back", round(c_price, 2), w_ins, "stake", "insurance leg", p_model=p11)])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p_over = fc.p_over[2.5]
@@ -73,6 +74,7 @@ class LayUndersStaged(Strategy):
     best_for = "Matches expecting 3+ goals where Under 2.5 is 1.8 to 3.0, giving room for the price to shorten before you add."
     avoid_when = "Under 2.5 already below 1.7, or defensive sides where a slow start is likely to stay slow."
     needs_prices = ("under_25",)
+    settlement = "approximate"
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         p_under = 1 - fc.p_over[2.5]
@@ -111,7 +113,7 @@ class LayUndersStaged(Strategy):
         return StrategyResult("Over/Under 2.5", "lay", "Under 2.5", hit, 1 / p_under, prices.under_25 if is_market else None, edge,
                               scenarios, plan, rationale,
                               orders=[OrderLeg("OVER_UNDER_25", "Under 2.5 Goals", "lay", round(u0, 2), 0.5, "liability",
-                                               "first half of the liability; the second half goes on in play at 15 minutes if still 0-0")])
+                                               "first half of the liability; the second half goes on in play at 15 minutes if still 0-0", p_model=p_under)])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p_under = 1 - fc.p_over[2.5]

@@ -15,6 +15,8 @@ class BackUndersTradeOut(Strategy):
     best_for = "Cagey matches expecting 2.2 goals or fewer, Under 2.5 priced 1.7 to 2.1, two organised defences."
     avoid_when = "Any match with 2.6+ goals expected, or sides that concede early."
     needs_prices = ("under_25",)
+    settlement = "approximate"
+    enabled_default = False  # negative model-synthetic ROI and 30% strike: time decay does not pay for the goal risk
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         p_under = 1 - fc.p_over[2.5]
@@ -43,7 +45,7 @@ class BackUndersTradeOut(Strategy):
         ]
         return StrategyResult("Over/Under 2.5", "back", "Under 2.5", hit, 1 / p_under, prices.under_25 if is_market else None, edge,
                               scenarios, plan, rationale,
-                              orders=[OrderLeg("OVER_UNDER_25", "Under 2.5 Goals", "back", round(price, 2), 1.0, "stake", "back unders pre-match")])
+                              orders=[OrderLeg("OVER_UNDER_25", "Under 2.5 Goals", "back", round(price, 2), 1.0, "stake", "back unders pre-match", p_model=p_under)])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p_under = 1 - fc.p_over[2.5]

@@ -10,7 +10,11 @@
 <body>
 <header class="top">
   <div class="brandrow">
-    <div class="brand"><span class="logo"></span>TradeScout <span class="tag">football trading research</span></div>
+    <div class="brand"><span class="logo"></span>TradeScout <span class="tag">exchange trading research</span></div>
+    <div class="sportswitch" id="sportswitch">
+      <button class="sport active" data-sport="football">⚽ Football</button>
+      <button class="sport" data-sport="tennis">🎾 Tennis</button>
+    </div>
     <div class="pills" id="pills"></div>
   </div>
   <div class="datebar">
@@ -18,17 +22,19 @@
     <input type="date" id="date" title="Pick any date, past or future">
     <button id="next" title="Next day" class="icon">›</button>
     <button id="today" class="ghost">Today</button>
-    <button id="go" class="primary" title="Re-run the scan for this day">Refresh</button>
+    <button id="go" class="primary" title="Re-run the scan and refresh prices">Refresh</button>
     <span class="meta" id="scanmeta"></span>
   </div>
   <div class="daystrip" id="daystrip"></div>
 </header>
 
 <nav class="tabs">
-  <button class="tab active" data-view="picks">Top picks</button>
+  <button class="tab active" data-view="picks">Opportunities</button>
   <button class="tab" data-view="matches">Matches</button>
   <button class="tab" data-view="strategies">By strategy</button>
   <button class="tab" data-view="journal">My picks <span class="count" id="journalCount"></span></button>
+  <button class="tab" data-view="performance">Performance</button>
+  <button class="tab" data-view="bankroll">Bankroll</button>
   <button class="tab" data-view="settings">Settings</button>
   <button class="tab" data-view="help">Help</button>
 </nav>
@@ -38,10 +44,11 @@
 
   <section id="view-picks" class="view active">
     <div class="toolbar">
-      <label>Show <select id="picksCount"><option>5</option><option selected>10</option><option>20</option><option>50</option></select> best ideas</label>
+      <label>Show <select id="picksMode"><option value="trade">TRADE only</option><option value="priced">TRADE + NO TRADE (priced)</option><option value="all" selected>everything incl. research</option></select></label>
+      <label><input type="checkbox" id="picksBoth"> both sports</label>
       <label><input type="checkbox" id="picksPerMatch" checked> one per match</label>
-      <label>ranked by <select id="picksSort"><option value="score">overall score</option><option value="hit">chance of paying off</option><option value="roi">expected return</option><option value="edge">market edge</option></select></label>
-      <label>minimum <select id="picksMin"><option value="0">any rating</option><option value="2" selected>★★ and up</option><option value="3">★★★ and up</option><option value="4">★★★★ and up</option></select></label>
+      <label>ranked by <select id="picksSort"><option value="score">opportunity score</option><option value="ev">conservative edge</option><option value="hit">chance of paying off</option></select></label>
+      <label>show <select id="picksCount"><option>10</option><option selected>20</option><option>50</option></select></label>
     </div>
     <div id="picks"></div>
   </section>
@@ -50,9 +57,9 @@
     <div class="split">
       <aside class="list">
         <div class="filters">
-          <input id="search" placeholder="Search team…">
+          <input id="search" placeholder="Search team or player…">
           <select id="leagueFilter"><option value="">All leagues</option></select>
-          <select id="sort"><option value="score">Sort: best rating</option><option value="time">Sort: kick-off</option><option value="goals">Sort: most goals expected</option></select>
+          <select id="sort"><option value="score">Sort: best opportunity</option><option value="time">Sort: start time</option></select>
         </div>
         <div id="matchList"></div>
       </aside>
@@ -69,90 +76,108 @@
   <section id="view-journal" class="view">
     <div class="toolbar">
       <button id="settleBtn" class="primary">Update results</button>
-      <span class="meta">Picks you track are settled automatically against real results as they come in. Use this as your paper-trading record before risking money.</span>
+      <span class="meta">Tracked picks settle automatically against real results. Plans with in-play exits are settled at modelled exit prices and say so.</span>
     </div>
     <div class="grid" id="journalSummary"></div>
     <div id="journalList"></div>
     <h3 style="color:var(--muted);margin-top:22px">Open orders on Betfair</h3>
-    <div class="toolbar"><button id="openBetsBtn" class="small">Refresh open orders</button><span class="meta">Orders placed from this app that are waiting for the plan price or partly matched. Cancel removes the unmatched part.</span></div>
+    <div class="toolbar"><button id="openBetsBtn" class="small">Refresh open orders</button><span class="meta">Orders placed from this app that are waiting for the plan price or partly matched.</span></div>
     <div id="openBets"></div>
+  </section>
+
+  <section id="view-performance" class="view">
+    <div class="card prose">
+      <h2>Strategy performance, out of sample</h2>
+      <p class="meta" id="perfNote"></p>
+    </div>
+    <div id="perfTables"></div>
+    <div class="card"><h2>Signals log</h2><div id="signalsSummary" class="meta"></div></div>
+  </section>
+
+  <section id="view-bankroll" class="view">
+    <div class="grid" id="bankSummary"></div>
+    <div class="split2">
+      <div class="card"><h2>Risk limits</h2><div id="limitsList" class="meta"></div></div>
+      <div class="card"><h2>Risk of ruin check</h2><p class="meta">Monte Carlo on a generic trade (pays +100% / loses 100%) at your per-trade cap: how often a bank halves within 500 trades.</p><div id="ruin" class="meta"></div></div>
+    </div>
   </section>
 
   <section id="view-settings" class="view">
     <div class="split2">
       <div class="card">
-        <h2>Fixtures feed <span class="light" id="lightFixtures"></span></h2>
-        <p class="meta">Free. Gives you today's and future fixtures for the Premier League, Championship, Bundesliga, La Liga, Serie A, Ligue 1, Eredivisie, Primeira Liga and Champions League, plus fresh results for the ratings.</p>
+        <h2>Fixtures feed (football) <span class="light" id="lightFixtures"></span></h2>
+        <p class="meta">Free. Today's and future football fixtures and fresh results. Tennis fixtures come from Betfair (below).</p>
         <ol class="meta">
-          <li>Register at <a href="https://www.football-data.org/client/register" target="_blank" rel="noopener">football-data.org/client/register</a> (name and email).</li>
-          <li>The email they send contains a long code. Paste it here and press Save.</li>
+          <li>Register at <a href="https://www.football-data.org/client/register" target="_blank" rel="noopener">football-data.org/client/register</a>.</li>
+          <li>Paste the code from their email here and press Save.</li>
         </ol>
         <label class="field">API key <input id="fdKey" placeholder="paste the code from the email"></label>
         <div class="row"><button class="primary" id="saveFd">Save</button><button id="testFd">Test connection</button><button class="ghost danger" id="clearFd">Remove</button><span class="meta" id="fdResult"></span></div>
       </div>
       <div class="card">
-        <h2>Betfair prices <span class="light" id="lightBetfair"></span></h2>
-        <p class="meta">Optional but important: with Betfair connected the app compares its own numbers with the real exchange price and shows the <b>Edge</b>. That is where profit comes from.</p>
+        <h2>Betfair <span class="light" id="lightBetfair"></span></h2>
+        <p class="meta">Needed for anything to be called a TRADE: the app compares its probabilities with the exchange's back and lay prices and depth. Without it every idea is RESEARCH ONLY.</p>
         <ol class="meta">
-          <li>You need a funded Betfair account.</li>
-          <li>Follow <a href="https://developer.betfair.com/get-started/" target="_blank" rel="noopener">developer.betfair.com/get-started</a> to create an Application Key. The free <b>Delayed</b> key is fine to start.</li>
-          <li>Enter the key plus your Betfair username and password. They are stored only on this computer, in the .env file next to the app.</li>
+          <li>Funded Betfair account.</li>
+          <li>Create an Application Key at <a href="https://developer.betfair.com/get-started/" target="_blank" rel="noopener">developer.betfair.com/get-started</a> (the free Delayed key is fine to start).</li>
+          <li>Enter the key, username and password. Stored only in the .env file on this computer.</li>
         </ol>
-        <label class="field">Application key <input id="bfKey" placeholder="e.g. aBcDeFgHiJkLmNoP"></label>
+        <label class="field">Application key <input id="bfKey"></label>
         <label class="field">Username <input id="bfUser" autocomplete="off"></label>
         <label class="field">Password <input id="bfPass" type="password" autocomplete="new-password"></label>
         <div class="row"><button class="primary" id="saveBf">Save</button><button id="testBf">Test login</button><button class="ghost danger" id="clearBf">Remove</button><span class="meta" id="bfResult"></span></div>
       </div>
       <div class="card">
-        <h2>Staking</h2>
-        <p class="meta">Stake suggestions are a fraction of the mathematically optimal (Kelly) stake, capped at 5% of bank. Smaller is safer.</p>
+        <h2>Bank, staking and value threshold</h2>
         <label class="field">Bank (£) <input id="bank" type="number" min="10" step="10"></label>
-        <label class="field">Style <select id="kelly"><option value="0.1">Cautious (10% Kelly)</option><option value="0.25">Standard (25% Kelly)</option><option value="0.5">Aggressive (50% Kelly)</option></select></label>
+        <label class="field">Staking style <select id="kelly"><option value="0.1">Cautious (10% Kelly)</option><option value="0.25">Standard (25% Kelly)</option><option value="0.5">Aggressive (50% Kelly)</option></select></label>
+        <label class="field">Commission rate you pay on Betfair (%) <input id="commission" type="number" min="0" max="20" step="0.5"></label>
+        <label class="field">Minimum conservative net edge to call a TRADE (%) <input id="minEdge" type="number" min="0" max="50" step="0.5"></label>
         <div class="row"><button class="primary" id="saveStake">Save</button><span class="meta" id="stakeResult"></span></div>
       </div>
       <div class="card">
         <h2>Betting <span class="light" id="lightBetting"></span></h2>
-        <p class="meta">Controls what the <b>Bet slip</b> is allowed to do. <b>Off</b>: review and copy only. <b>Paper</b>: record slips in My picks without placing anything. <b>Live</b>: after you press a confirmation button, the app sends the slip's lines to Betfair as limit orders at the plan price. Unmatched orders lapse at kick-off. Nothing is ever sent without that confirmation.</p>
+        <p class="meta"><b>Off</b>: review only. <b>Paper</b>: record slips in My picks. <b>Live</b>: after you confirm on screen, send a TRADE's lines to Betfair as limit orders at the plan price (lapse at kick-off). Only ideas marked TRADE can be placed.</p>
         <label class="field">Mode <select id="betMode"><option value="off">Off (review only)</option><option value="paper">Paper (record, do not place)</option><option value="live">Live (place on Betfair after I confirm)</option></select></label>
-        <label class="field">Daily cap (£ total at risk per day in live mode) <input id="dailyCap" type="number" min="0" step="5"></label>
+        <label class="field">Daily cap (£ at risk per day in live mode) <input id="dailyCap" type="number" min="0" step="5"></label>
         <div class="row"><button class="primary" id="saveBetting">Save</button><span class="meta" id="bettingResult"></span></div>
         <div class="meta" id="bettingInfo" style="margin-top:8px"></div>
       </div>
       <div class="card">
-        <h2>Data</h2>
-        <div class="meta" id="dataInfo"></div>
+        <h2>Strategies</h2>
+        <p class="meta">Tick the strategies the scanner should run. Shipped defaults switch off strategies that lost money in the out-of-sample test or cannot be settled from the data.</p>
+        <div id="stratToggles"></div>
+        <div class="row" style="margin-top:8px"><button class="primary" id="saveStrats">Save</button><span class="meta" id="stratResult"></span></div>
       </div>
+      <div class="card"><h2>Data</h2><div class="meta" id="dataInfo"></div></div>
     </div>
   </section>
 
   <section id="view-help" class="view">
     <div class="card prose">
-      <h2>How to use TradeScout</h2>
+      <h2>How to read TradeScout</h2>
       <ol>
-        <li><b>Set up once</b> in <b>Settings</b>: paste your free football-data.org key for live fixtures. Add Betfair when you are ready to see real prices and edge.</li>
-        <li><b>Each day</b>: open the app, it shows the next day with matches. <b>Top picks</b> is the ranked shortlist for that day. Click a pick to open the full plan.</li>
-        <li><b>Matches</b> lists every fixture. Click one for the model's view in plain English and every strategy that fits.</li>
-        <li><b>By strategy</b> answers "which matches suit lay the draw today?" and tells you when a strategy should and should not be used.</li>
-        <li><b>Track</b> the picks you like. <b>My picks</b> settles them automatically against the real results and keeps your strike rate, profit and return. Paper trade for a few weeks before staking real money.</li>
+        <li><b>Pick a sport</b> at the top: Football or Tennis. Each has its own fixtures, model and strategies.</li>
+        <li><b>Pick a day.</b> Today, any future day, or a past day to see what happened.</li>
+        <li><b>Opportunities</b> ranks ideas. Each carries a decision:
+          <span class="badge-dec trade">TRADE</span> conservative net edge after commission clears your threshold at a price that is actually available;
+          <span class="badge-dec notrade">NO TRADE</span> priced by the exchange but no proven advantage;
+          <span class="badge-dec research">RESEARCH</span> no exchange price, so nothing can be called value.
+          Most days have few or no TRADEs. That is the system working.</li>
+        <li><b>Open a plan</b> for the market, side, entry price, maximum price, stake, maximum loss, why the model sees value, what must happen, when to exit, and what to do if it goes wrong.</li>
+        <li><b>Track</b> picks into My picks to build a record. <b>Performance</b> shows out-of-sample strategy statistics and what the signals log has recorded.</li>
       </ol>
-      <h3>Reading a plan</h3>
-      <p>Each plan has <span class="ph entry">Before kick-off</span> (what to place and the price), <span class="ph inplay">In play</span> (what to wait for), <span class="ph exit">Get out</span> (how to take profit), <span class="ph stop">Stop loss</span> (when to cut) and <b>Why</b>, the reasoning behind the numbers. The scenario table shows every way the match can go, how likely each is and what you make or lose.</p>
-      <h3>Ratings</h3>
+      <h3>The numbers on a card</h3>
       <ul>
-        <li><b>★★★★★ / ★★★★</b> strong: the expected return after costs is clearly positive.</li>
-        <li><b>★★★</b> good at the price shown or better. <b>★★</b> fair, marginal. <b>★</b> leave it.</li>
-        <li><b>Pays off</b> is how often this plan ends in profit, adjusted by how the strategy has really performed in this league over two seasons of back-testing.</li>
-        <li><b>Edge</b> is how much better the exchange price is than the model's fair price. It only appears with Betfair connected. Without it, ratings are driven by the model alone and cluster around ★★ to ★★★.</li>
-        <li><b>Confidence</b> is how much recent data sits behind both teams. Treat anything under 0.5 with care (new or promoted teams, early season).</li>
+        <li><b>Pays off</b>: probability the plan ends in profit, shrunk towards the strategy's real out-of-sample strike rate.</li>
+        <li><b>Net edge</b>: expected profit per £1 risked after commission, using a probability pulled towards the market's own price. The model is only allowed a small say against the exchange.</li>
+        <li><b>Confidence</b>: how much data sits behind the ratings. Low confidence pulls the probability further towards the market.</li>
+        <li><b>Execution</b>: can the size be matched at the plan price, and is the spread tight.</li>
+        <li><b>Evidence</b>: how the plan's return is established. "Exchange-priced, settles at result" is firmest. "Simulated in-play exits" means the exits are the model's estimate of where the market will be, not recorded prices.</li>
+        <li><b>Score</b>: 10 points per 1% conservative net edge, scaled by execution and evidence. Research ideas never score above 39.</li>
       </ul>
-      <h3>Rules that keep you profitable</h3>
-      <ul>
-        <li>Only enter at the plan's price or better. If the market does not offer it, there is no trade.</li>
-        <li>Decide the exit and the stop before kick-off. The plan gives you both. Follow them.</li>
-        <li>Stakes are small on purpose. Variance is the thing that ends trading careers.</li>
-        <li>Prefer liquid leagues (Premier League, La Liga, Bundesliga, Serie A, Champions League).</li>
-        <li>This is research, not tips. The in-play decisions are yours.</li>
-      </ul>
+      <h3>What is and is not proven</h3>
+      <p>The out-of-sample tests show the football match-odds model has modest skill over league averages and the tennis ratings barely beat the ATP ranking, while exchange prices are known to be sharp. No historical exchange prices were available to prove that any strategy made money against the market. Until the signals log shows TRADE decisions paying off at observed prices, treat every return figure as an estimate, not a track record.</p>
     </div>
   </section>
 </main>

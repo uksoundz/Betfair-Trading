@@ -35,9 +35,12 @@ def _tau(x: np.ndarray, y: np.ndarray, lam: np.ndarray, mu: np.ndarray, rho: flo
 
 @dataclass
 class DixonColesModel:
-    xi: float = 0.0045  # time decay per day
+    xi: float = 0.003  # time decay per day (tuned on 2024-25, confirmed on 2025-26 holdout)
     max_goals: int = 8
     history_days: int = 900
+    # L2 penalty on attack/defence ratings. 0.3 was chosen on the 2024-25 tuning season and confirmed on
+    # the 2025-26 holdout (eval/football_eval.py): it improves 1X2 log-loss and goals calibration.
+    ridge: float = 0.3
 
     def __post_init__(self):
         self.teams: list[str] = []
@@ -86,7 +89,7 @@ class DixonColesModel:
             dfn = p[n:2 * n]
             return att, dfn, p[2 * n], p[2 * n + 1]
 
-        ridge = 0.01
+        ridge = self.ridge
         is00 = (hg == 0) & (ag == 0)
         is10 = (hg == 1) & (ag == 0)
         is01 = (hg == 0) & (ag == 1)
@@ -143,6 +146,9 @@ class DixonColesModel:
 
     def score_matrix(self, home: str, away: str) -> tuple[np.ndarray, float, float]:
         lam, mu = self.expected_goals(home, away)
+        return self.score_matrix_from(lam, mu), lam, mu
+
+    def score_matrix_from(self, lam: float, mu: float) -> np.ndarray:
         g = np.arange(self.max_goals + 1)
         ph = poisson.pmf(g, lam)
         pa = poisson.pmf(g, mu)
@@ -154,7 +160,7 @@ class DixonColesModel:
         m[1, 1] *= 1 - self.rho
         m = np.clip(m, 0, None)
         m /= m.sum()
-        return m, lam, mu
+        return m
 
     def ratings_table(self) -> list[tuple[str, float, float, int]]:
         return sorted(((t, float(self.attack[i]), float(self.defence[i]), self.matches_in_window[t]) for t, i in self.index.items()),

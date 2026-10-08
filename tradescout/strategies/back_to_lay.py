@@ -15,6 +15,8 @@ class BackToLayFavourite(Strategy):
     best_for = "A favourite priced 1.5 to 2.5 that starts fast and scores first often; home sides against poor travellers."
     avoid_when = "Favourite shorter than 1.4 (no room to shorten) or longer than 2.6 (not really a favourite)."
     needs_prices = ("home", "away")
+    settlement = "approximate"
+    enabled_default = False  # negative model-synthetic ROI in both backtest seasons
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         fav_home = fc.favourite == "home"
@@ -52,7 +54,7 @@ class BackToLayFavourite(Strategy):
         ]
         return StrategyResult("Match Odds", "back", fav_name, hit, 1 / p_fav, mkt if is_market else None, edge,
                               scenarios, plan, rationale,
-                              orders=[OrderLeg("MATCH_ODDS", "home" if fav_home else "away", "back", round(price, 2), 1.0, "stake", "back the favourite pre-match")])
+                              orders=[OrderLeg("MATCH_ODDS", "home" if fav_home else "away", "back", round(price, 2), 1.0, "stake", "back the favourite pre-match", p_model=p_fav)])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         fav_home = fc.favourite == "home"

@@ -2,19 +2,23 @@ const $ = (s) => document.querySelector(s);
 const pct = (v) => v == null ? '-' : Math.round(v * 100) + '%';
 const spct = (v) => v == null ? '-' : (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
 const price = (v) => v == null ? '-' : v.toFixed(2);
-const money = (v) => (v < 0 ? '-£' : '£') + Math.abs(v).toFixed(2);
+const money = (v) => v == null ? '-' : (v < 0 ? '-£' : '£') + Math.abs(v).toFixed(2);
 const starsHtml = (n) => `<span class="stars ${n <= 1 ? 'dim' : ''}" title="${n} out of 5">${'★'.repeat(n)}${'☆'.repeat(5 - n)}</span>`;
-const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const PH = { entry: 'Before kick-off', inplay: 'In play', exit: 'Get out', stop: 'Stop loss', note: 'Note' };
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const PH = { entry: 'Before start', inplay: 'In play', exit: 'Get out', stop: 'Stop loss', note: 'Note' };
+const DEC = { 'TRADE': 'trade', 'NO TRADE': 'notrade', 'RESEARCH': 'research' };
+const decBadge = (d) => `<span class="badge-dec ${DEC[d] || 'research'}">${esc(d)}</span>`;
+const EVID = { 'exchange-priced-static': 'Exchange-priced, settles at result', 'simulated-inplay': 'Simulated in-play exits', 'model-synthetic': 'Model only, no market price' };
 
-let data = null, strategies = [], selected = null, status = {}, calendar = {}, autoJumped = false, warnedBetfair = false;
+let sport = 'football', data = null, dataOther = null, strategies = [], selected = null, status = {}, calendar = {}, autoJumped = false, warnedBetfair = false;
 
 function toast(msg, ms = 4000) { const t = $('#toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', ms); }
 function isoShift(iso, days) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + days); return d.toISOString().slice(0, 10); }
 function showView(name) {
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x.dataset.view === name));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
-  if (name === 'picks') renderPicks(); if (name === 'strategies') renderStrategy(); if (name === 'journal') loadJournal(); if (name === 'settings') loadSettings();
+  if (name === 'picks') renderPicks(); if (name === 'strategies') renderStrategy(); if (name === 'journal') loadJournal();
+  if (name === 'settings') loadSettings(); if (name === 'performance') loadPerformance(); if (name === 'bankroll') loadBankroll();
 }
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -25,17 +29,15 @@ async function api(path, opts) {
 
 async function init() {
   await loadStatus();
-  strategies = await api('/api/strategies');
   $('#date').value = status.today;
-  const ss = $('#stratSelect');
-  strategies.forEach(s => { const o = document.createElement('option'); o.value = s.key; o.textContent = s.label; ss.appendChild(o); });
+  document.querySelectorAll('.sport').forEach(b => b.onclick = () => setSport(b.dataset.sport));
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => showView(t.dataset.view));
   $('#go').onclick = () => scan(true); $('#prev').onclick = () => { $('#date').value = isoShift($('#date').value, -1); autoJumped = true; scan(); };
   $('#next').onclick = () => { $('#date').value = isoShift($('#date').value, 1); autoJumped = true; scan(); };
   $('#today').onclick = () => { $('#date').value = status.today; autoJumped = false; scan(); };
   $('#date').onchange = () => { autoJumped = true; scan(); };
   ['#search', '#leagueFilter', '#sort'].forEach(s => $(s).oninput = renderList);
-  ['#picksCount', '#picksPerMatch', '#picksSort', '#picksMin'].forEach(s => $(s).onchange = renderPicks);
+  ['#picksMode', '#picksBoth', '#picksPerMatch', '#picksSort', '#picksCount'].forEach(s => $(s).onchange = () => { if (s === '#picksBoth' && $('#picksBoth').checked) loadOther(); else renderPicks(); });
   $('#stratSelect').onchange = renderStrategy;
   $('#settleBtn').onclick = settleJournal;
   $('#saveFd').onclick = () => saveSettings({ football_data_org_key: $('#fdKey').value }, '#fdResult');
@@ -43,38 +45,50 @@ async function init() {
   $('#testFd').onclick = () => testConn('/api/test/fixtures', '#fdResult', r => `Connected. ${r.fixtures_next_3_days} fixtures in the next 3 days.`);
   $('#saveBf').onclick = () => saveSettings({ betfair_app_key: $('#bfKey').value, betfair_username: $('#bfUser').value, betfair_password: $('#bfPass').value }, '#bfResult');
   $('#clearBf').onclick = () => saveSettings({ clear_betfair: true }, '#bfResult');
-  $('#testBf').onclick = () => testConn('/api/test/betfair', '#bfResult', r => `Logged in. ${r.football_events_next_2_days} football events in the next 2 days.`);
-  $('#saveStake').onclick = () => saveSettings({ bank: +$('#bank').value, kelly_fraction: +$('#kelly').value }, '#stakeResult');
+  $('#testBf').onclick = () => testConn('/api/test/betfair', '#bfResult', r => `Logged in. ${r.football_events_next_2_days} football and ${r.tennis_events_next_2_days} tennis events in the next 2 days.`);
+  $('#saveStake').onclick = () => saveSettings({ bank: +$('#bank').value, kelly_fraction: +$('#kelly').value, commission: (+$('#commission').value) / 100, min_edge: (+$('#minEdge').value) / 100 }, '#stakeResult');
   $('#saveBetting').onclick = () => {
     const mode = $('#betMode').value;
-    if (mode === 'live' && !confirm('Live mode lets the Bet slip send real orders to Betfair after you press a confirmation button. Turn it on?')) { $('#betMode').value = status.betting_mode || 'off'; return; }
+    if (mode === 'live' && !confirm('Live mode lets the Bet slip send real orders to Betfair after you press a confirmation button. Only ideas marked TRADE can be placed. Turn it on?')) { $('#betMode').value = status.betting_mode || 'off'; return; }
     saveSettings({ betting_mode: mode, daily_cap: +$('#dailyCap').value }, '#bettingResult');
   };
+  $('#saveStrats').onclick = () => saveSettings({ enabled_strategies: [...document.querySelectorAll('#stratToggles input:checked')].map(i => i.value) }, '#stratResult');
   $('#openBetsBtn').onclick = loadOpenBets;
+  $('#modal').onclick = (ev) => { if (ev.target.id === 'modal') $('#modal').hidden = true; };
+  await setSport('football');
+}
+
+async function setSport(s) {
+  sport = s; dataOther = null; selected = null; autoJumped = false;
+  document.querySelectorAll('.sport').forEach(b => b.classList.toggle('active', b.dataset.sport === s));
+  strategies = await api('/api/strategies?sport=' + s);
+  const ss = $('#stratSelect'); ss.innerHTML = '';
+  strategies.forEach(x => { const o = document.createElement('option'); o.value = x.key; o.textContent = x.label + (x.enabled ? '' : ' (off)'); ss.appendChild(o); });
+  const lf = $('#leagueFilter'); lf.innerHTML = '<option value="">All leagues</option>';
+  Object.entries((status.leagues || {})[s] || {}).forEach(([k, v]) => { const o = document.createElement('option'); o.value = k; o.textContent = v; lf.appendChild(o); });
   await loadCalendar(status.today);
   scan();
 }
 
 async function loadStatus() {
   status = await api('/api/status');
-  const lf = $('#leagueFilter'); lf.innerHTML = '<option value="">All leagues</option>';
-  Object.entries(status.leagues).forEach(([k, v]) => { const o = document.createElement('option'); o.value = k; o.textContent = v; lf.appendChild(o); });
   renderPills();
 }
 
 function renderPills() {
   const j = status.journal || {};
+  const live = sport === 'tennis' ? status.tennis_live : status.live_fixtures;
   $('#pills').innerHTML = `
-    <span class="pill" data-go="settings" title="Click to set up"><span class="dot ${status.live_fixtures ? 'on' : ''}"></span>${status.live_fixtures ? 'Live fixtures' : 'Built-in fixtures only'}</span>
-    <span class="pill" data-go="settings" title="Click to set up"><span class="dot ${status.betfair ? 'on' : status.betfair_error ? 'warn' : ''}"></span>${status.betfair ? 'Betfair prices' : 'No exchange prices'}</span>
+    <span class="pill" data-go="settings" title="Click to set up"><span class="dot ${live ? 'on' : ''}"></span>${live ? 'Live fixtures' : (sport === 'tennis' ? 'Replay data (connect Betfair for live tennis)' : 'Built-in fixtures only')}</span>
+    <span class="pill" data-go="settings" title="Click to set up"><span class="dot ${status.betfair ? 'on' : status.betfair_error ? 'warn' : ''}"></span>${status.betfair ? 'Exchange prices' : 'No exchange prices: research only'}</span>
     <span class="pill" data-go="settings" title="Betting mode"><span class="dot ${status.betting_mode === 'live' ? 'warn' : status.betting_mode === 'paper' ? 'on' : ''}"></span>${status.betting_mode === 'live' ? 'LIVE betting on' : status.betting_mode === 'paper' ? 'Paper betting' : 'Betting off'}</span>
-    <span class="pill" data-go="settings"><span class="dot on"></span>Bank £${status.bank}</span>`;
+    <span class="pill" data-go="bankroll"><span class="dot on"></span>Bank £${status.bank} · open risk £${(status.exposure && status.exposure.open_total || 0).toFixed(0)}</span>`;
   document.querySelectorAll('.pill').forEach(p => p.onclick = () => showView(p.dataset.go));
   $('#journalCount').textContent = j.picks ? j.picks : '';
 }
 
 async function loadCalendar(startIso) {
-  try { const c = await api(`/api/calendar?start=${startIso}&days=10`); calendar = c.counts || {}; } catch (e) { calendar = {}; }
+  try { const c = await api(`/api/calendar?start=${startIso}&days=10&sport=${sport}`); calendar = c.counts || {}; } catch (e) { calendar = {}; }
   renderDayStrip(startIso);
 }
 
@@ -82,7 +96,7 @@ function renderDayStrip(startIso) {
   const sel = $('#date').value; const out = [];
   for (let k = 0; k < 10; k++) {
     const iso = isoShift(startIso, k); const d = new Date(iso + 'T00:00:00'); const n = calendar[iso] || 0;
-    out.push(`<div class="day ${n ? 'has' : 'none'} ${iso === sel ? 'sel' : ''}" data-d="${iso}">${d.toLocaleDateString(undefined, { weekday: 'short' })} ${d.getDate()}<small>${n ? n + ' games' : 'no games'}</small></div>`);
+    out.push(`<div class="day ${n ? 'has' : 'none'} ${iso === sel ? 'sel' : ''}" data-d="${iso}">${d.toLocaleDateString(undefined, { weekday: 'short' })} ${d.getDate()}<small>${n ? n + (sport === 'tennis' ? ' matches' : ' games') : 'none'}</small></div>`);
   }
   $('#daystrip').innerHTML = out.join('');
   document.querySelectorAll('.day').forEach(el => el.onclick = () => { $('#date').value = el.dataset.d; autoJumped = true; scan(); });
@@ -92,36 +106,42 @@ async function scan(refresh = false) {
   const d = $('#date').value; if (!d) return;
   renderDayStrip(status.today);
   $('#banner').innerHTML = ''; $('#matchList').innerHTML = '<div class="spinner">Scanning ' + d + '…</div>'; $('#detail').innerHTML = ''; $('#picks').innerHTML = '<div class="spinner">Scanning…</div>';
-  try { data = await api('/api/scan?date=' + d + (refresh ? '&refresh=true' : '')); selected = null; }
+  try { data = await api(`/api/scan?date=${d}&sport=${sport}${refresh ? '&refresh=true' : ''}`); selected = null; dataOther = null; }
   catch (e) {
     data = null; $('#picks').innerHTML = ''; $('#matchList').innerHTML = '';
-    $('#banner').innerHTML = `<div class="banner err"><b>Could not scan ${d}.</b> ${esc(e.message)}${/key/i.test(e.message) ? ' <a href="#" data-go="settings">Open Settings</a>' : ''}</div>`;
+    $('#banner').innerHTML = `<div class="banner err"><b>Could not scan ${d}.</b> ${esc(e.message)}${/key|Betfair|Settings/i.test(e.message) ? ' <a href="#" data-go="settings">Open Settings</a>' : ''}</div>`;
     document.querySelectorAll('#banner a').forEach(a => a.onclick = (ev) => { ev.preventDefault(); showView(a.dataset.go); });
     return;
   }
-  $('#scanmeta').textContent = `${data.fixtures} fixtures · ${data.ideas} ideas · model on ${data.model_matches.toLocaleString()} matches`;
+  const dec = data.decisions || {};
+  $('#scanmeta').textContent = `${data.fixtures} fixtures · ${data.ideas} ideas · ${dec.TRADE || 0} TRADE · ${dec['NO TRADE'] || 0} no trade · ${dec.RESEARCH || 0} research · model on ${data.model_matches.toLocaleString()} matches`;
   if (!data.matches.length) {
     const up = data.upcoming || {}; const nextDay = Object.keys(up)[0]; const blank = data.weekday;
     if (!autoJumped && nextDay) {
       autoJumped = true; $('#date').value = nextDay; await scan();
-      $('#banner').innerHTML = `<div class="banner">No matches in the covered leagues on <b>${blank}</b>, so this is the next match day. Pick any other day from the strip above.</div>`;
+      $('#banner').innerHTML = `<div class="banner">No ${sport} in the covered competitions on <b>${blank}</b>, so this is the next match day.${sport === 'tennis' && !status.tennis_live ? ' Tennis is in replay mode: connect Betfair in Settings for live ATP fixtures and prices.' : ''}</div>`;
       return;
     }
     const list = Object.entries(up).map(([k, n]) => `<li><a href="#" data-d="${k}">${new Date(k + 'T00:00:00').toDateString()}</a> — ${n} fixtures</li>`).join('');
-    $('#picks').innerHTML = $('#matchList').innerHTML = `<div class="empty">No matches in the covered leagues on ${data.weekday}.${list ? '<p>Next match days:</p><ul style="text-align:left;display:inline-block">' + list + '</ul>' : ''}</div>`;
+    $('#picks').innerHTML = $('#matchList').innerHTML = `<div class="empty">No ${sport} in the covered competitions on ${data.weekday}.${list ? '<p>Next match days:</p><ul style="text-align:left;display:inline-block">' + list + '</ul>' : ''}</div>`;
     document.querySelectorAll('#picks a, #matchList a').forEach(a => a.onclick = (ev) => { ev.preventDefault(); $('#date').value = a.dataset.d; scan(); });
     return;
   }
   renderList(); renderPicks(); renderStrategy();
-  if (!status.betfair && !warnedBetfair) { warnedBetfair = true; toast('Tip: connect Betfair in Settings to see real prices and edge.', 6000); }
+  if (!status.betfair && !warnedBetfair) { warnedBetfair = true; toast('No exchange prices: every idea is RESEARCH ONLY until Betfair is connected in Settings.', 7000); }
+}
+
+async function loadOther() {
+  const other = sport === 'tennis' ? 'football' : 'tennis';
+  try { dataOther = await api(`/api/scan?date=${$('#date').value}&sport=${other}`); } catch (e) { dataOther = null; toast('Could not load ' + other + ': ' + e.message); }
+  renderPicks();
 }
 
 function filteredMatches() {
-  const q = $('#search').value.toLowerCase(), lg = $('#leagueFilter').value, sort = $('#sort').value;
+  const q = $('#search').value.toLowerCase(), lg = $('#leagueFilter').value, sortBy = $('#sort').value;
   let ms = data.matches.filter(m => (!lg || m.league === lg) && (!q || (m.home + ' ' + m.away).toLowerCase().includes(q)));
-  if (sort === 'score') ms.sort((a, b) => (b.best_score || 0) - (a.best_score || 0));
-  if (sort === 'time') ms.sort((a, b) => (a.kickoff || '').localeCompare(b.kickoff || ''));
-  if (sort === 'goals') ms.sort((a, b) => (b.forecast.home_xg + b.forecast.away_xg) - (a.forecast.home_xg + a.forecast.away_xg));
+  if (sortBy === 'score') ms.sort((a, b) => (b.n_trades - a.n_trades) || ((b.best_score || 0) - (a.best_score || 0)));
+  if (sortBy === 'time') ms.sort((a, b) => (a.kickoff || '').localeCompare(b.kickoff || ''));
   return ms;
 }
 
@@ -130,66 +150,94 @@ function renderList() {
   $('#matchList').innerHTML = filteredMatches().map(m => `
     <div class="m ${selected === m.id ? 'sel' : ''}" data-id="${esc(m.id)}">
       <div class="ko">${m.kickoff || ''}<br>${esc(m.league_name)}</div>
-      <div class="teams">${esc(m.home)}<br>${esc(m.away)}<div class="sub">${m.best_strategy ? esc(m.best_strategy) : 'no strategy fits'} · xG ${m.forecast.home_xg.toFixed(1)}-${m.forecast.away_xg.toFixed(1)}${m.result ? ' · FT ' + m.result.home + '-' + m.result.away : ''}</div></div>
-      <div>${starsHtml(m.best_stars)}</div>
+      <div class="teams">${esc(m.home)}<br>${esc(m.away)}<div class="sub">${m.best_strategy ? esc(m.best_strategy) : 'no strategy fits'}${m.result ? ' · ' + (m.sport === 'tennis' ? esc(m.result.winner.split(' ').slice(-1)[0] + ' ' + m.result.sets) : 'FT ' + m.result.home + '-' + m.result.away) : ''}</div></div>
+      <div>${decBadge(m.best_decision)}<br>${starsHtml(m.best_stars)}</div>
     </div>`).join('');
   document.querySelectorAll('.m').forEach(el => el.onclick = () => showMatch(el.dataset.id));
 }
 
-function showMatch(id) {
-  selected = id; showView('matches'); renderList();
-  const m = data.matches.find(x => x.id === id); if (!m) return; const f = m.forecast;
-  const result = m.result ? `<div class="result">Actual result: <b>${esc(m.home)} ${m.result.home}-${m.result.away} ${esc(m.away)}</b>${m.result.ht_home != null ? ` (half-time ${m.result.ht_home}-${m.result.ht_away})` : ''}</div>` : '';
+function forecastPanel(m) {
+  const f = m.forecast;
+  if (f.sport === 'tennis') {
+    const setsTxt = Object.entries(f.p_sets).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => `${k} ${pct(v)}`).join(' · ');
+    return `<div class="grid">
+      <div class="stat"><b>${pct(f.p_a)} / ${pct(f.p_b)}</b><span>${esc(m.home)} / ${esc(m.away)} to win</span></div>
+      <div class="stat"><b>${Math.round(f.elo_a)} v ${Math.round(f.elo_b)}</b><span>Elo rating on ${esc(f.surface.toLowerCase())}</span></div>
+      <div class="stat"><b>${pct(f.pa_serve)} / ${pct(f.pb_serve)}</b><span>points won on serve</span></div>
+      <div class="stat"><b>${pct(f.p_set1_a)}</b><span>${esc(m.home)} wins set 1</span></div>
+      <div class="stat"><b>${f.expected_games.toFixed(1)}</b><span>expected games (best of ${f.best_of})</span></div>
+      <div class="stat"><b>${setsTxt}</b><span>set betting</span></div>
+      <div class="stat"><b>${pct(f.cond.set1_won)} / ${pct(f.cond.set1_lost)}</b><span>${esc(m.home)} after winning / losing set 1</span></div>
+      <div class="stat"><b>${pct(f.p_first_break_a)} / ${pct(f.p_first_break_b)}</b><span>breaks first</span></div>
+    </div>
+    <div class="meta">Match odds</div><div class="bar"><i style="width:${f.p_a * 100}%;background:var(--accent)"></i><i style="width:${(1 - f.p_a) * 100}%;background:var(--inplay)"></i></div>`;
+  }
+  return `<div class="grid">
+    <div class="stat"><b>${f.home_xg.toFixed(2)} – ${f.away_xg.toFixed(2)}</b><span>expected goals</span></div>
+    <div class="stat"><b>${pct(f.p_home)} / ${pct(f.p_draw)} / ${pct(f.p_away)}</b><span>home / draw / away</span></div>
+    <div class="stat"><b>${pct(f.p_over['2.5'])}</b><span>over 2.5 goals</span></div>
+    <div class="stat"><b>${pct(f.p_btts)}</b><span>both teams score</span></div>
+    <div class="stat"><b>${pct(f.p_00)}</b><span>0-0</span></div>
+    <div class="stat"><b>${pct(f.p_goal_before['70'])}</b><span>goal before 70'</span></div>
+    <div class="stat"><b>${pct(f.p_fav_scores_first)}</b><span>${esc(f.favourite)} score first</span></div>
+    <div class="stat"><b>${f.top_scores.slice(0, 3).map(s => s.score + ' ' + pct(s.p)).join(' · ')}</b><span>most likely scores</span></div>
+  </div>
+  <div class="meta">Match odds</div><div class="bar"><i style="width:${f.p_home * 100}%;background:var(--accent)"></i><i style="width:${f.p_draw * 100}%;background:var(--muted)"></i><i style="width:${f.p_away * 100}%;background:var(--inplay)"></i></div>`;
+}
+
+function showMatch(id, fromData) {
+  const src = fromData || data; const m = src.matches.find(x => x.id === id); if (!m) return;
+  if (src === data) { selected = id; renderList(); }
+  showView('matches');
+  const f = m.forecast;
+  const result = m.result ? `<div class="result">Actual result: <b>${m.sport === 'tennis' ? esc(m.result.winner) + ' won ' + esc(m.result.score) + (m.result.retired ? ' (retirement)' : '') : esc(m.home) + ' ' + m.result.home + '-' + m.result.away + ' ' + esc(m.away)}</b></div>` : '';
   $('#detail').innerHTML = `
     <div class="card">
       <h2>${esc(m.home)} v ${esc(m.away)}</h2>
-      <div class="meta">${esc(m.league_name)} · ${data.weekday}${m.kickoff ? ' · ' + m.kickoff : ''} · data confidence ${f.confidence.toFixed(2)}</div>
+      <div class="meta">${esc(m.league_name)}${f.tourney ? ' · ' + esc(f.tourney) : ''} · ${src.weekday}${m.kickoff ? ' · ' + m.kickoff : ''} · data confidence ${f.confidence.toFixed(2)}${src.prices_as_of ? ' · prices ' + src.prices_as_of.replace('T', ' ') + ' UTC' : ' · no exchange prices'}</div>
       ${result}
       <h3>The model's view</h3>
       ${m.summary.map(s => `<p style="margin:4px 0">${esc(s)}</p>`).join('')}
-      <div class="grid">
-        <div class="stat"><b>${f.home_xg.toFixed(2)} – ${f.away_xg.toFixed(2)}</b><span>expected goals</span></div>
-        <div class="stat"><b>${pct(f.p_home)} / ${pct(f.p_draw)} / ${pct(f.p_away)}</b><span>home / draw / away</span></div>
-        <div class="stat"><b>${pct(f.p_over['2.5'])}</b><span>over 2.5 goals</span></div>
-        <div class="stat"><b>${pct(f.p_btts)}</b><span>both teams score</span></div>
-        <div class="stat"><b>${pct(f.p_00)}</b><span>0-0</span></div>
-        <div class="stat"><b>${pct(f.p_goal_before['70'])}</b><span>goal before 70'</span></div>
-        <div class="stat"><b>${pct(f.p_fav_scores_first)}</b><span>${esc(f.favourite)} score first</span></div>
-        <div class="stat"><b>${f.top_scores.slice(0, 3).map(s => s.score + ' ' + pct(s.p)).join(' · ')}</b><span>most likely scores</span></div>
-      </div>
-      <div class="meta">Match odds</div><div class="bar"><i style="width:${f.p_home * 100}%;background:var(--accent)" title="home"></i><i style="width:${f.p_draw * 100}%;background:var(--muted)" title="draw"></i><i style="width:${f.p_away * 100}%;background:var(--inplay)" title="away"></i></div>
+      ${forecastPanel(m)}
     </div>
     <h3 style="margin:18px 0 8px;color:var(--muted)">Strategies for this match, best first</h3>
-    ${m.ideas.length ? m.ideas.map(i => ideaCard(i, m)).join('') : '<div class="card">No strategy passes its entry rules for this match. That is a legitimate answer: leave it.</div>'}`;
-  wireIdeaButtons(m);
+    ${m.ideas.length ? m.ideas.map(i => ideaCard(i, m)).join('') : '<div class="card">No enabled strategy passes its entry rules for this match. That is a legitimate answer: leave it.</div>'}`;
+  wireIdeaButtons(m, src);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function ideaCard(i, m) {
-  const settled = i.settled ? `<div class="result">Replay: this plan ${i.settled.hit >= 0.5 ? '<b class="pos">paid off</b>' : '<b class="neg">did not pay off</b>'} — ${spct(i.settled.pnl)} per unit risked${i.settled.hit > 0 && i.settled.hit < 1 ? ' (goal minutes not in the data, so this is an expectation)' : ''}</div>` : '';
-  const hist = i.historical_strike_rate != null ? `<span>History: <b>${pct(i.historical_strike_rate)}</b> strike over ${i.historical_sample} similar trades</span>` : '';
-  return `<div class="card idea s${i.stars}" id="idea-${esc(i.strategy)}">
-    <div class="head">${starsHtml(i.stars)}<h2>${esc(i.strategy_label)}</h2><span class="meta">${i.side.toUpperCase()} · ${esc(i.market)} · ${esc(i.selection)} · score ${Math.round(i.score)}</span>
-      <button class="small ${i.tracked ? 'ghost' : 'primary'}" data-track="${esc(i.strategy)}" ${i.tracked ? 'disabled' : ''}>${i.tracked ? 'Tracked ✓' : '+ Track this pick'}</button>
+  const settled = i.settled ? `<div class="result">Replay: this plan ${i.settled.hit >= 0.5 ? '<b class="pos">paid off</b>' : '<b class="neg">did not pay off</b>'} — ${spct(i.settled.pnl)} per unit risked${i.evidence !== 'exchange-priced-static' ? ' (modelled exits)' : ''}${i.settled.hit > 0 && i.settled.hit < 1 ? ' (event timing not in the data, so this is an expectation)' : ''}</div>` : '';
+  const hist = i.historical_strike_rate != null ? `<span>History: <b>${pct(i.historical_strike_rate)}</b> strike over ${i.historical_sample} similar trades</span>` : '<span>History: <b>none</b> for this strategy and league</span>';
+  const legs = (i.legs || []).map((l, k) => { const o = i.orders[k] || {}; return `<tr><td>${esc(o.side || '').toUpperCase()} ${esc(o.selection)} <span class="meta">(${esc(o.market)})</span></td><td class="n">${pct(o.p_model)}</td><td class="n">${pct(l.p_market)}</td><td class="n">${pct(l.p_conservative)}</td><td class="n">${l.price ? l.price.toFixed(2) : '-'}</td><td class="n">${l.spread == null ? '-' : (l.spread * 100).toFixed(1) + '%'}</td><td class="n">${l.fill_fraction == null ? '-' : pct(l.fill_fraction)}</td><td class="n ${l.ev_conservative >= 0 ? 'pos' : 'neg'}">${spct(l.ev_conservative)}</td><td class="meta">${esc((l.reasons || []).join(' '))}</td></tr>`; }).join('');
+  return `<div class="card idea ${DEC[i.decision]}" id="idea-${esc(i.strategy)}">
+    <div class="head">${decBadge(i.decision)}${starsHtml(i.stars)}<h2>${esc(i.strategy_label)}</h2><span class="evidence" title="How the return is established">${esc(EVID[i.evidence] || i.evidence)}</span>
+      <button class="small ${i.tracked ? 'ghost' : ''}" data-track="${esc(i.strategy)}" ${i.tracked ? 'disabled' : ''}>${i.tracked ? 'Tracked ✓' : '+ Track'}</button>
       <button class="small" data-copy="${esc(i.strategy)}">Copy plan</button>
-      ${i.orders && i.orders.length ? `<button class="small" data-slip="${esc(i.strategy)}">Bet slip</button>` : ''}</div>
+      ${i.orders && i.orders.length ? `<button class="small ${i.decision === 'TRADE' ? 'primary' : ''}" data-slip="${esc(i.strategy)}">Bet slip</button>` : ''}</div>
     <div class="verdict">${esc(i.verdict)}</div>
     <div class="kv">
-      <span>Pays off: <b>${pct(i.calibrated_hit_prob)}</b></span>
-      <span>Return: <b>${spct(i.calibrated_roi)}</b> per unit risked</span>
-      <span>Win <b class="pos">${spct(i.win_return)}</b> / lose <b class="neg">${spct(i.loss_return)}</b></span>
-      <span>Entry price: <b>${price(i.market_price || i.model_price)}</b>${i.market_price ? ' (exchange)' : ' (model)'}</span>
-      <span>Edge: <b>${spct(i.edge)}</b></span>
-      <span>Stake: <b>${money(i.stake_money)}</b> (${i.stake_pct.toFixed(1)}% of bank)</span>
+      <span>Pays off: <b>${pct(i.calibrated_hit_prob)}</b> <span title="raw model">(model ${pct(i.hit_prob)})</span></span>
+      <span>Net edge (conservative): <b>${spct(i.ev_conservative)}</b> <span title="on the raw model probability">(model ${spct(i.ev_model)})</span></span>
+      <span>Modelled plan return: <b>${spct(i.calibrated_roi)}</b> per unit</span>
+      <span>Win <b class="pos">${spct(i.win_return)}</b> / lose <b class="neg">${spct(i.loss_return)}</b> / worst <b class="neg">${spct(i.max_loss_per_unit)}</b></span>
+      <span>Entry: <b>${price(i.market_price || i.model_price)}</b>${i.market_price ? ' (exchange)' : ' (model fair)'}</span>
+      <span>Market implies: <b>${pct(i.p_market)}</b></span>
+      <span>Confidence: <b>${i.confidence.toFixed(2)}</b></span>
+      <span>Execution: <b>${i.execution ? i.execution.toFixed(2) : '-'}</b></span>
+      <span>Stake: <b>${i.stake_money ? money(i.stake_money) : 'none'}</b>${i.risk_money ? ' (risk ' + money(i.risk_money) + ')' : ''}</span>
       ${hist}
     </div>
+    ${(i.decision_reasons || []).map(r => `<div class="meta">· ${esc(r)}</div>`).join('')}
+    ${(i.risk_notes || []).map(r => `<div class="meta">· risk: ${esc(r)}</div>`).join('')}
     ${settled}
     <h3>The plan</h3>
     <ul class="steps">${i.plan.map(p => `<li><span class="ph ${p.phase}">${PH[p.phase]}</span><span>${esc(p.text)}</span></li>`).join('')}</ul>
     <h3>Why</h3>
     <ul style="margin:4px 0 4px 18px">${i.rationale.map(r => `<li>${esc(r)}</li>`).join('')}</ul>
-    <div class="meta" style="margin-top:6px"><b>Best for:</b> ${esc(i.best_for)}<br><b>Avoid when:</b> ${esc(i.avoid_when)}</div>
+    <div class="meta" style="margin-top:6px"><b>Best for:</b> ${esc(i.best_for)}<br><b>Avoid when:</b> ${esc(i.avoid_when)}<br><b>Settlement in tests:</b> ${esc(i.settlement)}${i.inplay ? ' · needs in-play action' : ' · settles at the result'}</div>
     ${i.warnings.map(w => `<div class="warn">! ${esc(w)}</div>`).join('')}
+    ${legs ? `<details style="margin-top:8px"><summary class="meta">Value check per selection (model vs market vs conservative)</summary><div class="wrap"><table class="sc"><tr><th>Selection</th><th class="n">Model</th><th class="n">Market</th><th class="n">Used</th><th class="n">Price</th><th class="n">Spread</th><th class="n">Fill</th><th class="n">Net EV</th><th>Notes</th></tr>${legs}</table></div></details>` : ''}
     <details style="margin-top:8px"><summary class="meta">How the match can go: every scenario, its chance and your profit or loss</summary>${scenarioTable(i)}</details>
   </div>`;
 }
@@ -199,51 +247,61 @@ function scenarioTable(i) {
   return `<table class="sc"><tr><th>What happens</th><th class="n">Chance</th><th class="n">Profit per unit risked</th></tr>
     ${rows.map(s => `<tr><td>${esc(s.label)}</td><td class="n">${pct(s.prob)}</td><td class="n ${s.profit >= 0 ? 'pos' : 'neg'}">${spct(s.profit)}</td></tr>`).join('')}
     <tr class="sum"><td>Expected (model)</td><td class="n">100%</td><td class="n">${spct(i.expected_roi)}</td></tr></table>
-    <div class="meta" style="margin-top:6px">Prices after a goal are model estimates of where the market will trade. A 3% allowance for spread and commission is already deducted.</div>`;
+    <div class="meta" style="margin-top:6px">Prices after an event are the model's estimate of where the market will trade, less a 3% allowance for spread and commission. They are not guaranteed.</div>`;
 }
 
-function planText(i, m) {
-  return [`${m.home} v ${m.away} (${m.league_name}, ${data.weekday}${m.kickoff ? ' ' + m.kickoff : ''})`, `${i.strategy_label} — ${i.verdict}`,
-    `Pays off ${pct(i.calibrated_hit_prob)} · return ${spct(i.calibrated_roi)} · stake ${money(i.stake_money)}`, '',
+function planText(i, m, src) {
+  return [`${m.home} v ${m.away} (${m.league_name}, ${src.weekday}${m.kickoff ? ' ' + m.kickoff : ''})`, `${i.decision} · ${i.strategy_label} — ${i.verdict}`,
+    `Pays off ${pct(i.calibrated_hit_prob)} · conservative net edge ${spct(i.ev_conservative)} · stake ${money(i.stake_money)} · worst case ${spct(i.max_loss_per_unit)} of risk`, '',
     ...i.plan.map(p => `${PH[p.phase]}: ${p.text}`), '', 'Why:', ...i.rationale.map(r => `- ${r}`)].join('\n');
 }
 
-async function openSlip(m, strategy, stake) {
+async function openSlip(m, strategy, stake, src) {
   const modal = $('#modal'), card = $('#modalCard'); modal.hidden = false;
   card.innerHTML = '<div class="spinner">Building the slip and checking prices…</div>';
   try {
-    const body = { date: data.date, match_id: m.id, strategy }; if (stake) body.stake_money = stake;
+    const body = { date: src.date, match_id: m.id, strategy, sport: m.sport }; if (stake) body.stake_money = stake;
     const s = await api('/api/betslip/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const rows = s.lines.map(l => `<tr class="slipline ${l.warnings.length ? 'bad' : ''}">
       <td>${esc(l.market_label)}</td><td>${esc(l.runner_name)}</td><td>${l.side.toUpperCase()}</td>
       <td class="n">${l.plan_price.toFixed(2)}</td><td class="n">${l.live_price ? l.live_price.toFixed(2) : '-'} ${l.price_ok === true ? '<span class="ok">✓</span>' : l.price_ok === false ? '<span class="no">✗</span>' : ''}</td>
       <td class="n">${money(l.size)}</td><td class="n">${money(l.liability)}</td><td class="n">${money(l.payout)}</td>
       <td class="meta">${esc(l.note)}${l.warnings.map(w => '<div class="warn">! ' + esc(w) + '</div>').join('')}</td>
-      <td>${l.betfair_url ? `<a class="small btnlink" href="${esc(l.betfair_url)}" target="_blank" rel="noopener">Open in Betfair ›</a>` : '<span class="meta" title="Connect Betfair in Settings to get direct market links">-</span>'}</td></tr>`).join('');
+      <td>${l.betfair_url ? `<a class="btnlink" href="${esc(l.betfair_url)}" target="_blank" rel="noopener">Open in Betfair ›</a>` : '-'}</td></tr>`).join('');
     const urls = [...new Set(s.lines.map(l => l.betfair_url).filter(Boolean))];
-    card.innerHTML = `<h2>Bet slip: ${esc(s.strategy_label)}</h2><div class="meta">${esc(s.fixture)} · ${s.date} · prices from ${s.price_source}</div>
-      <div class="row" style="margin:10px 0"><label class="meta">Plan stake (unit risked) £ <input id="slipStake" type="number" min="2" step="1" value="${s.stake_money}" style="width:90px"></label>
-        <button id="slipRecalc" class="small">Recalculate</button></div>
+    const canPlace = status.betting_mode === 'live' && status.betfair && s.decision === 'TRADE';
+    card.innerHTML = `<h2>${decBadge(s.decision)} Bet slip: ${esc(s.strategy_label)}</h2><div class="meta">${esc(s.fixture)} · ${s.date} · prices from ${s.price_source}</div>
+      ${s.decision !== 'TRADE' ? `<div class="banner" style="margin-top:8px"><b>${esc(s.decision)}.</b> ${esc((s.decision_reasons || []).join(' '))}${s.decision === 'RESEARCH' ? '' : ' Placing is disabled for anything that is not a TRADE.'}</div>` : ''}
+      <div class="row" style="margin:10px 0"><label class="meta">Plan stake (unit risked) £ <input id="slipStake" type="number" min="2" step="1" value="${s.stake_money}" style="width:90px"></label><button id="slipRecalc" class="small">Recalculate</button></div>
       <div class="wrap"><table class="sc"><tr><th>Market</th><th>Selection</th><th>Side</th><th class="n">Plan price</th><th class="n">Live best</th><th class="n">Size</th><th class="n">Risk</th><th class="n">Wins</th><th>Notes</th><th></th></tr>${rows}
         <tr class="sum"><td colspan="5">Total</td><td class="n">${money(s.total_staked)} staked</td><td class="n">${money(s.total_liability)} at risk</td><td></td><td></td><td></td></tr></table></div>
       ${s.warnings.map(w => `<div class="warn" style="margin-top:6px">! ${esc(w)}</div>`).join('')}
-      <p class="meta" style="margin-top:10px"><b>How to place it:</b> press <b>Open in Betfair</b> on a line (or <b>Open all markets</b>). On the Betfair page click the <b>${s.lines.some(l => l.side === 'lay') ? 'pink Lay' : 'blue Back'}</b> price for the selection shown, type the <b>Size</b> as your stake, set the odds to the <b>Plan price</b> if the market is not already there, and press Place bets. Betfair does not let outside apps pre-fill its betslip, so that last click is yours. ✓ means the plan price is available now; ✗ means it is not, so leave the order at the plan price and let it lapse at kick-off if unmatched.</p>
+      <p class="meta" style="margin-top:10px"><b>Size</b> is the backer's stake to enter on Betfair for each line. <b>Live best</b> ✓ means the plan price is available now; ✗ means it is not, so leave a limit order at the plan price and let it lapse.</p>
       <div class="row" style="margin-top:12px">
-        ${status.betting_mode === 'live' && status.betfair ? `<button id="slipPlace" class="primary" style="background:var(--bad);border-color:var(--bad)">Place ${s.lines.filter(l => l.market_id && !l.below_minimum).length} bets on Betfair · ${money(s.total_liability)} at risk</button>` : ''}
-        ${urls.length ? `<button id="slipOpenAll" class="${status.betting_mode === 'live' ? '' : 'primary'}">Open all markets in Betfair (${urls.length})</button>` : '<button class="primary" disabled title="Connect Betfair in Settings">Open in Betfair</button>'}
-        <button id="slipPaper">Record as paper bet</button>
-        <button id="slipCopy">Copy slip</button>
-        <button id="slipClose" class="ghost">Close</button>
+        ${canPlace ? `<button id="slipPlace" class="primary" style="background:var(--bad);border-color:var(--bad)">Place ${s.lines.filter(l => l.market_id && !l.below_minimum).length} bets on Betfair · ${money(s.total_liability)} at risk</button>` : ''}
+        ${urls.length ? `<button id="slipOpenAll" class="${canPlace ? '' : 'primary'}">Open all markets in Betfair (${urls.length})</button>` : '<button class="primary" disabled title="Connect Betfair in Settings">Open in Betfair</button>'}
+        <button id="slipPaper">Record as paper bet</button><button id="slipCopy">Copy slip</button><button id="slipClose" class="ghost">Close</button>
       </div>
-      <div class="meta" style="margin-top:8px">${status.betting_mode === 'live' ? `Live betting is ON. Daily cap £${status.daily_cap}, £${(status.committed_today || 0).toFixed(2)} committed today.` : status.betting_mode === 'paper' ? 'Paper mode: slips are recorded, nothing is sent to Betfair. Switch to Live in Settings when ready.' : 'Betting mode is Off: review and copy only. Choose Paper or Live in Settings.'}</div>
-      <div id="slipConfirm"></div>
-      ${urls.length ? '' : '<div class="meta" style="margin-top:8px">Connect Betfair in Settings and the slip links straight to each market, with the live price check filled in.</div>'}`;
-    if (urls.length) $('#slipOpenAll').onclick = () => { urls.forEach((u, k) => setTimeout(() => window.open(u, '_blank', 'noopener'), k * 150)); toast(urls.length > 1 ? 'Opening each market in a new tab. Allow pop-ups for this page if only one opened.' : 'Opening the market in Betfair.'); };
+      <div class="meta" style="margin-top:8px">${status.betting_mode === 'live' ? `Live betting is ON. Daily cap £${status.daily_cap}, £${(status.committed_today || 0).toFixed(2)} committed today.` : status.betting_mode === 'paper' ? 'Paper mode: slips are recorded, nothing is sent to Betfair.' : 'Betting mode is Off: review and copy only.'}</div>
+      <div id="slipConfirm"></div>`;
+    $('#slipClose').onclick = () => modal.hidden = true;
+    $('#slipRecalc').onclick = () => openSlip(m, strategy, +$('#slipStake').value, src);
+    if (urls.length) $('#slipOpenAll').onclick = () => { urls.forEach((u, k) => setTimeout(() => window.open(u, '_blank', 'noopener'), k * 150)); };
+    $('#slipCopy').onclick = async () => {
+      const txt = [`${s.decision} · ${s.fixture} · ${s.strategy_label} · stake £${s.stake_money}`, ...s.lines.map(l => `${l.side.toUpperCase()} ${l.runner_name} (${l.market_label}) @ ${l.plan_price.toFixed(2)} size £${l.size.toFixed(2)} risk £${l.liability.toFixed(2)}`)].join('\n');
+      try { await navigator.clipboard.writeText(txt); toast('Slip copied.'); } catch (e) { toast('Copy failed: ' + e.message); }
+    };
+    $('#slipPaper').onclick = async () => {
+      $('#slipPaper').disabled = true;
+      try { await api('/api/betslip/paper', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, stake_money: +$('#slipStake').value }) });
+        const idea = m.ideas.find(x => x.strategy === strategy); if (idea) idea.tracked = true; await loadStatus(); modal.hidden = true; toast('Recorded as a paper bet in My picks.'); showMatch(m.id, src); }
+      catch (e) { $('#slipPaper').disabled = false; toast('Could not record: ' + e.message, 6000); }
+    };
     if ($('#slipPlace')) $('#slipPlace').onclick = () => {
       const sendable = s.lines.filter(l => l.market_id && !l.below_minimum);
       $('#slipConfirm').innerHTML = `<div class="banner err" style="margin-top:10px"><b>Confirm: send ${sendable.length} order${sendable.length === 1 ? '' : 's'} to Betfair now?</b>
         <ul style="margin:6px 0 6px 18px">${sendable.map(l => `<li>${l.side.toUpperCase()} ${esc(l.runner_name)} (${esc(l.market_label)}) at ${l.plan_price.toFixed(2)}, size ${money(l.size)}, risk ${money(l.liability)}</li>`).join('')}</ul>
-        Total at risk ${money(sendable.reduce((a, l) => a + l.liability, 0))}. Orders are limit orders at the plan price and lapse at kick-off if unmatched. This uses real money.
+        Total at risk ${money(sendable.reduce((a, l) => a + l.liability, 0))}. Limit orders at the plan price, lapsing at the start if unmatched. This uses real money.
         <div class="row" style="margin-top:8px"><button id="slipGo" class="primary" style="background:var(--bad);border-color:var(--bad)">Yes, place the bets</button><button id="slipNo" class="ghost">No, go back</button></div></div>`;
       $('#slipNo').onclick = () => $('#slipConfirm').innerHTML = '';
       $('#slipGo').onclick = async () => {
@@ -253,83 +311,72 @@ async function openSlip(m, strategy, stake) {
           const res = r.result;
           $('#slipConfirm').innerHTML = `<div class="banner ${res.ok ? '' : 'err'}" style="margin-top:10px"><b>${esc(res.message)}</b>
             <table class="sc" style="margin-top:6px"><tr><th>Line</th><th class="n">Price</th><th class="n">Size</th><th>Status</th><th class="n">Matched</th><th>Bet id</th></tr>
-            ${res.lines.map(l => `<tr><td>${l.side.toUpperCase()} ${esc(l.runner_name)} (${esc(l.market_label)})</td><td class="n">${l.price.toFixed(2)}</td><td class="n">${money(l.size)}</td>
-              <td class="${l.status === 'SUCCESS' ? 'pos' : 'neg'}">${l.status}${l.order_status ? ' · ' + (l.order_status === 'EXECUTION_COMPLETE' ? 'matched' : 'waiting for price') : ''}${l.error ? ' · ' + esc(l.error) : ''}</td>
-              <td class="n">${l.size_matched ? money(l.size_matched) + (l.avg_price_matched ? ' @ ' + l.avg_price_matched.toFixed(2) : '') : '-'}</td><td class="meta">${l.bet_id || '-'}</td></tr>`).join('')}</table>
-            <div class="meta" style="margin-top:6px">£${(r.committed_today || 0).toFixed(2)} of your £${r.daily_cap} daily cap is now committed. Open orders can be cancelled from My picks.</div></div>`;
+            ${res.lines.map(l => `<tr><td>${l.side.toUpperCase()} ${esc(l.runner_name)} (${esc(l.market_label)})</td><td class="n">${l.price.toFixed(2)}</td><td class="n">${money(l.size)}</td><td class="${l.status === 'SUCCESS' ? 'pos' : 'neg'}">${l.status}${l.order_status ? ' · ' + (l.order_status === 'EXECUTION_COMPLETE' ? 'matched' : 'waiting for price') : ''}${l.error ? ' · ' + esc(l.error) : ''}</td><td class="n">${l.size_matched ? money(l.size_matched) : '-'}</td><td class="meta">${l.bet_id || '-'}</td></tr>`).join('')}</table></div>`;
           if (res.ok) { const idea = m.ideas.find(x => x.strategy === strategy); if (idea) idea.tracked = true; await loadStatus(); toast('Bets placed and logged in My picks.'); }
         } catch (e) { $('#slipConfirm').innerHTML = `<div class="banner err" style="margin-top:10px"><b>Not placed.</b> ${esc(e.message)}</div>`; }
       };
     };
-    $('#slipClose').onclick = () => modal.hidden = true;
-    $('#slipRecalc').onclick = () => openSlip(m, strategy, +$('#slipStake').value);
-    $('#slipCopy').onclick = async () => {
-      const txt = [`${s.fixture} · ${s.strategy_label} · stake £${s.stake_money}`, ...s.lines.map(l => `${l.side.toUpperCase()} ${l.runner_name} (${l.market_label}) @ ${l.plan_price.toFixed(2)} size £${l.size.toFixed(2)} risk £${l.liability.toFixed(2)}`)].join('\n');
-      try { await navigator.clipboard.writeText(txt); toast('Slip copied.'); } catch (e) { toast('Copy failed: ' + e.message); }
-    };
-    $('#slipPaper').onclick = async () => {
-      $('#slipPaper').disabled = true;
-      try { await api('/api/betslip/paper', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, stake_money: +$('#slipStake').value }) });
-        const idea = m.ideas.find(x => x.strategy === strategy); if (idea) idea.tracked = true; await loadStatus(); modal.hidden = true; toast('Recorded as a paper bet in My picks.'); showMatch(m.id); }
-      catch (e) { $('#slipPaper').disabled = false; toast('Could not record: ' + e.message, 6000); }
-    };
   } catch (e) { card.innerHTML = `<h2>Bet slip</h2><div class="warn">! ${esc(e.message)}</div><div class="row" style="margin-top:10px"><button id="slipClose" class="ghost">Close</button></div>`; $('#slipClose').onclick = () => modal.hidden = true; }
 }
 
-function wireIdeaButtons(m) {
-  document.querySelectorAll('[data-slip]').forEach(b => b.onclick = (ev) => { ev.stopPropagation(); openSlip(m, b.dataset.slip); });
-  $('#modal').onclick = (ev) => { if (ev.target.id === 'modal') $('#modal').hidden = true; };
+function wireIdeaButtons(m, src) {
+  document.querySelectorAll('[data-slip]').forEach(b => b.onclick = (ev) => { ev.stopPropagation(); openSlip(m, b.dataset.slip, null, src); });
   document.querySelectorAll('[data-track]').forEach(b => b.onclick = async (ev) => {
     ev.stopPropagation(); b.disabled = true; b.textContent = 'Saving…';
-    try { await api('/api/journal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: data.date, match_id: m.id, strategy: b.dataset.track }) });
-      const idea = m.ideas.find(x => x.strategy === b.dataset.track); if (idea) idea.tracked = true; b.textContent = 'Tracked ✓'; b.classList.remove('primary'); b.classList.add('ghost');
+    try { await api('/api/journal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: src.date, match_id: m.id, strategy: b.dataset.track, sport: m.sport }) });
+      const idea = m.ideas.find(x => x.strategy === b.dataset.track); if (idea) idea.tracked = true; b.textContent = 'Tracked ✓'; b.classList.add('ghost');
       await loadStatus(); toast('Added to My picks. It will settle itself when the result is in.');
-    } catch (e) { b.disabled = false; b.textContent = '+ Track this pick'; toast('Could not track: ' + e.message, 6000); }
+    } catch (e) { b.disabled = false; b.textContent = '+ Track'; toast('Could not track: ' + e.message, 6000); }
   });
   document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async (ev) => {
     ev.stopPropagation(); const idea = m.ideas.find(x => x.strategy === b.dataset.copy);
-    try { await navigator.clipboard.writeText(planText(idea, m)); toast('Plan copied to clipboard.'); } catch (e) { toast('Copy failed: ' + e.message); }
+    try { await navigator.clipboard.writeText(planText(idea, m, src)); toast('Plan copied to clipboard.'); } catch (e) { toast('Copy failed: ' + e.message); }
   });
 }
 
-function allIdeas() { return data ? data.matches.flatMap(m => m.ideas.map(i => ({ ...i, m }))) : []; }
+function allIdeas(src) { return src ? src.matches.flatMap(m => m.ideas.map(i => ({ ...i, m, src }))) : []; }
 
-function pickRow(i, k, extra = '') {
-  return `<div class="card pick" data-id="${esc(i.m.id)}">
-    <div>${starsHtml(i.stars)}<div class="s">score ${Math.round(i.score)}</div></div>
-    <div><div class="t">${k + 1}. ${esc(i.m.home)} v ${esc(i.m.away)} <span class="s">· ${esc(i.m.league_name)} · ${i.m.kickoff || ''}</span></div>
-      <div><b>${esc(i.strategy_label)}</b> <span class="s">· ${esc(i.verdict)}</span></div>
+function pickRow(i, k) {
+  const m = i.m;
+  return `<div class="card pick" data-id="${esc(m.id)}" data-sport="${esc(m.sport)}">
+    <div>${decBadge(i.decision)}<div style="margin-top:4px">${starsHtml(i.stars)}</div><div class="s">score ${Math.round(i.score)}</div></div>
+    <div><div class="t">${k + 1}. ${esc(m.home)} v ${esc(m.away)} <span class="s">· ${m.sport === 'tennis' ? '🎾 ' : '⚽ '}${esc(m.league_name)} · ${m.kickoff || ''}</span></div>
+      <div><b>${esc(i.strategy_label)}</b> <span class="evidence">${esc(EVID[i.evidence] || i.evidence)}</span></div>
+      <div class="s">${esc(i.verdict)}</div>
       <div class="s">${esc(i.plan[0].text)}</div>
-      <div class="s">Pays off ${pct(i.calibrated_hit_prob)} · return ${spct(i.calibrated_roi)} · edge ${spct(i.edge)} · stake ${money(i.stake_money)}${i.settled ? ` · <b class="${i.settled.hit >= 0.5 ? 'pos' : 'neg'}">${i.settled.hit >= 0.5 ? 'paid off' : 'missed'} ${spct(i.settled.pnl)}</b>` : ''}${extra}</div></div>
+      <div class="s">Pays off ${pct(i.calibrated_hit_prob)} · net edge ${spct(i.ev_conservative)} · market ${pct(i.p_market)} · confidence ${i.confidence.toFixed(2)} · stake ${i.stake_money ? money(i.stake_money) : 'none'} · worst ${spct(i.max_loss_per_unit)}${i.settled ? ` · <b class="${i.settled.hit >= 0.5 ? 'pos' : 'neg'}">${i.settled.hit >= 0.5 ? 'paid off' : 'missed'} ${spct(i.settled.pnl)}</b>` : ''}</div></div>
     <div class="actions"><button class="small primary">Open plan ›</button>${i.tracked ? '<span class="s">Tracked ✓</span>' : ''}</div></div>`;
 }
 
 function renderPicks() {
   if (!data || !data.matches.length) return;
-  const n = +$('#picksCount').value, perMatch = $('#picksPerMatch').checked, sort = $('#picksSort').value, minStars = +$('#picksMin').value;
-  const key = { score: (i) => i.score, hit: (i) => i.calibrated_hit_prob, roi: (i) => i.calibrated_roi, edge: (i) => i.edge ?? -9 }[sort];
-  let ideas = allIdeas().filter(i => i.stars >= minStars).sort((a, b) => key(b) - key(a));
-  if (perMatch) { const seen = new Set(); ideas = ideas.filter(i => !seen.has(i.m.id) && seen.add(i.m.id)); }
+  const mode = $('#picksMode').value, perMatch = $('#picksPerMatch').checked, sortBy = $('#picksSort').value, n = +$('#picksCount').value;
+  let ideas = allIdeas(data);
+  if ($('#picksBoth').checked && dataOther) ideas = ideas.concat(allIdeas(dataOther));
+  if (mode === 'trade') ideas = ideas.filter(i => i.decision === 'TRADE');
+  if (mode === 'priced') ideas = ideas.filter(i => i.decision !== 'RESEARCH');
+  const key = { score: (i) => i.score, ev: (i) => i.ev_conservative ?? -9, hit: (i) => i.calibrated_hit_prob }[sortBy];
+  const rank = { 'TRADE': 2, 'NO TRADE': 1, 'RESEARCH': 0 };
+  ideas.sort((a, b) => (rank[b.decision] - rank[a.decision]) || (key(b) - key(a)));
+  if (perMatch) { const seen = new Set(); ideas = ideas.filter(i => !seen.has(i.m.sport + i.m.id) && seen.add(i.m.sport + i.m.id)); }
   ideas = ideas.slice(0, n);
-  if (!ideas.length) {
-    $('#picks').innerHTML = `<div class="empty">Nothing reaches ${'★'.repeat(minStars)} on ${data.weekday}. A quiet day is a legitimate answer: the best trades are often the ones you do not make.<br><br><button id="showAll" class="ghost">Show the best available anyway</button></div>`;
-    $('#showAll').onclick = () => { $('#picksMin').value = '0'; renderPicks(); };
-    return;
-  }
-  const settledOnes = ideas.filter(i => i.settled); const hits = settledOnes.reduce((a, i) => a + i.settled.hit, 0);
-  const expected = ideas.reduce((a, i) => a + i.calibrated_hit_prob, 0);
-  const head = `<div class="meta" style="margin-bottom:10px">${data.weekday}: ${ideas.length} picks shown of ${data.ideas} ideas across ${data.fixtures} fixtures. Expected to pay off: about ${Math.round(expected)} of ${ideas.length}.</div>`;
-  const replay = settledOnes.length ? `<div class="result" style="margin-bottom:10px">Replay: <b>${hits.toFixed(1)} of ${settledOnes.length}</b> settled picks paid off (model expected ${settledOnes.reduce((a, i) => a + i.calibrated_hit_prob, 0).toFixed(1)}). Total ${spct(settledOnes.reduce((a, i) => a + i.settled.pnl, 0) / settledOnes.length)} per unit risked on average.</div>` : '';
-  $('#picks').innerHTML = head + replay + ideas.map((i, k) => pickRow(i, k)).join('');
-  document.querySelectorAll('#picks .pick').forEach(el => el.onclick = () => showMatch(el.dataset.id));
+  const trades = allIdeas(data).filter(i => i.decision === 'TRADE').length + (dataOther ? allIdeas(dataOther).filter(i => i.decision === 'TRADE').length : 0);
+  let head = `<div class="meta" style="margin-bottom:10px">${data.weekday}: <b>${trades} TRADE</b> decision${trades === 1 ? '' : 's'} across ${data.fixtures}${dataOther ? ' + ' + dataOther.fixtures : ''} fixtures. ${trades === 0 ? 'NO TRADE today: no idea clears the conservative edge threshold at an available price.' : ''}${!status.betfair ? ' No exchange prices are connected, so nothing can be a TRADE: the list below is model research only.' : ''}</div>`;
+  if (!ideas.length) { $('#picks').innerHTML = head + `<div class="empty">Nothing to show in this view. ${mode === 'trade' ? 'Switch the filter to see priced NO TRADE ideas or research.' : ''}</div>`; return; }
+  const settledOnes = ideas.filter(i => i.settled);
+  if (settledOnes.length) head += `<div class="result" style="margin-bottom:10px">Replay: <b>${settledOnes.reduce((a, i) => a + i.settled.hit, 0).toFixed(1)} of ${settledOnes.length}</b> shown ideas paid off (expected ${settledOnes.reduce((a, i) => a + i.calibrated_hit_prob, 0).toFixed(1)}), ${spct(settledOnes.reduce((a, i) => a + i.settled.pnl, 0) / settledOnes.length)} per unit risked on average at model prices.</div>`;
+  $('#picks').innerHTML = head + ideas.map((i, k) => pickRow(i, k)).join('');
+  document.querySelectorAll('#picks .pick').forEach(el => el.onclick = () => { const src = el.dataset.sport === sport ? data : dataOther; showMatch(el.dataset.id, src); });
 }
 
 function renderStrategy() {
   const key = $('#stratSelect').value; const s = strategies.find(x => x.key === key); if (!s) return;
-  $('#stratInfo').innerHTML = `<h2>${esc(s.label)}</h2><p>${esc(s.description)}</p><p><b>Use it when:</b> ${esc(s.best_for)}</p><p><b>Avoid when:</b> ${esc(s.avoid_when)}</p>`;
+  const h = s.holdout;
+  $('#stratInfo').innerHTML = `<h2>${esc(s.label)} ${s.enabled ? '' : '<span class="evidence">disabled</span>'}</h2><p>${esc(s.description)}</p><p><b>Use it when:</b> ${esc(s.best_for)}</p><p><b>Avoid when:</b> ${esc(s.avoid_when)}</p>
+    ${h ? `<p class="meta"><b>Out-of-sample (holdout season, model prices):</b> ${h.n} trades · strike ${pct(h.strike)} vs predicted ${pct(h.predicted)} · ROI ${spct(h.roi)} [${spct(h.roi_ci_low)}, ${spct(h.roi_ci_high)}] · profit factor ${h.profit_factor.toFixed(2)} · max drawdown ${h.max_drawdown.toFixed(1)} units · longest losing run ${h.longest_losing_streak} · evidence: ${esc(h.evidence)}</p>` : '<p class="meta">No holdout statistics yet (run the holdout evaluation).</p>'}`;
   if (!data || !data.matches.length) { $('#stratList').innerHTML = ''; return; }
-  const ideas = allIdeas().filter(i => i.strategy === key).sort((a, b) => b.score - a.score);
-  $('#stratList').innerHTML = ideas.length ? ideas.map((i, k) => pickRow(i, k)).join('') : `<div class="empty">No match on ${data.weekday} passes the entry rules for this strategy.</div>`;
+  const ideas = allIdeas(data).filter(i => i.strategy === key).sort((a, b) => b.score - a.score);
+  $('#stratList').innerHTML = ideas.length ? ideas.map((i, k) => pickRow(i, k)).join('') : `<div class="empty">No match on ${data.weekday} passes the entry rules for this strategy${s.enabled ? '' : ' (it is disabled in Settings)'}.</div>`;
   document.querySelectorAll('#stratList .pick').forEach(el => el.onclick = () => showMatch(el.dataset.id));
 }
 
@@ -342,16 +389,21 @@ function renderJournal(j) {
     <div class="stat"><b>${s.settled ? pct(s.strike) : '-'}</b><span>strike rate (${s.won}/${s.settled})</span></div>
     <div class="stat"><b class="${s.pnl >= 0 ? 'pos' : 'neg'}">${money(s.pnl)}</b><span>profit / loss</span></div>
     <div class="stat"><b>${s.roi == null ? '-' : spct(s.roi)}</b><span>return on £${s.staked} staked</span></div>`;
-  if (!j.entries.length) { $('#journalList').innerHTML = '<div class="empty">No picks tracked yet. Open a plan and press <b>+ Track this pick</b>.</div>'; return; }
-  $('#journalList').innerHTML = `<table class="j"><tr><th>Date</th><th>Match</th><th>Strategy</th><th class="n">Rating</th><th class="n">Pays off</th><th class="n">Entry</th><th class="n">Stake</th><th>Status</th><th>Result</th><th class="n">P/L</th><th></th></tr>
-    ${j.entries.map(e => `<tr><td>${e.date}</td><td>${esc(e.home)} v ${esc(e.away)}<div class="s meta">${esc((status.leagues || {})[e.league] || e.league)}</div></td><td>${esc(e.strategy_label)}</td>
-      <td class="n">${Math.round(e.score)}</td><td class="n">${pct(e.hit_prob)}</td><td class="n">${price(e.entry_price)}</td><td class="n">${money(e.stake_money)}</td>
-      <td class="status-${e.status}">${e.status}${e.placed === 'live' ? ' <span class="count" title="placed on Betfair">LIVE</span>' : e.placed === 'paper' ? ' <span class="meta">paper</span>' : ''}</td><td>${e.result || '-'}</td><td class="n ${e.pnl_money == null ? '' : e.pnl_money >= 0 ? 'pos' : 'neg'}">${e.pnl_money == null ? '-' : money(e.pnl_money)}</td>
-      <td><button class="small ghost danger" data-del="${e.id}" title="Remove">✕</button></td></tr>`).join('')}</table>`;
+  if (!j.entries.length) { $('#journalList').innerHTML = '<div class="empty">No picks tracked yet. Open a plan and press <b>+ Track</b>.</div>'; return; }
+  $('#journalList').innerHTML = `<div class="wrap"><table class="j"><tr><th>Date</th><th>Match</th><th>Strategy</th><th>Decision</th><th class="n">Pays off</th><th class="n">Edge</th><th class="n">Entry</th><th class="n">Stake</th><th>Status</th><th>Result</th><th class="n">P/L</th><th></th></tr>
+    ${j.entries.map(e => `<tr><td>${e.date}</td><td>${e.sport === 'tennis' ? '🎾 ' : '⚽ '}${esc(e.home)} v ${esc(e.away)}<div class="s meta">${esc(((status.leagues || {})[e.sport] || {})[e.league] || e.league)}</div></td><td>${esc(e.strategy_label)}</td>
+      <td>${e.decision ? decBadge(e.decision) : '-'}</td><td class="n">${pct(e.hit_prob)}</td><td class="n">${spct(e.ev_conservative)}</td><td class="n">${price(e.entry_price)}</td><td class="n">${money(e.stake_money)}</td>
+      <td class="status-${e.status}">${e.status}${e.placed === 'live' ? ' <span class="count">LIVE</span>' : e.placed === 'paper' ? ' <span class="meta">paper</span>' : ''}</td><td>${esc(e.result || '-')}${e.note && e.note.includes('modelled') ? ' <span class="meta" title="in-play exits settled at modelled prices">(modelled)</span>' : ''}</td><td class="n ${e.pnl_money == null ? '' : e.pnl_money >= 0 ? 'pos' : 'neg'}">${e.pnl_money == null ? '-' : money(e.pnl_money)}</td>
+      <td><button class="small ghost danger" data-del="${e.id}" title="Remove">✕</button></td></tr>`).join('')}</table></div>`;
   document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/api/journal/' + b.dataset.del, { method: 'DELETE' }); await loadJournal(); await loadStatus(); });
 }
 async function loadJournal() { try { renderJournal(await api('/api/journal')); } catch (e) { toast('Could not load picks: ' + e.message); } loadOpenBets(); }
-
+async function settleJournal() {
+  const b = $('#settleBtn'); b.disabled = true; b.textContent = 'Checking results…';
+  try { const r = await api('/api/journal/settle', { method: 'POST' }); renderJournal(r); await loadStatus(); toast(r.settled ? `${r.settled} pick(s) settled.` : 'No new results yet.'); }
+  catch (e) { toast('Could not update: ' + e.message, 6000); }
+  b.disabled = false; b.textContent = 'Update results';
+}
 async function loadOpenBets() {
   const el = $('#openBets');
   if (!status.betfair) { el.innerHTML = '<div class="meta">Connect Betfair in Settings to see open orders.</div>'; return; }
@@ -361,8 +413,7 @@ async function loadOpenBets() {
     if (!r.ok) { el.innerHTML = `<div class="warn">! ${esc(r.error)}</div>`; return; }
     if (!r.orders.length) { el.innerHTML = '<div class="meta">No open orders from this app.</div>'; return; }
     el.innerHTML = `<table class="j"><tr><th>Placed</th><th>Market</th><th>Side</th><th class="n">Price</th><th class="n">Size</th><th class="n">Matched</th><th class="n">Waiting</th><th>Status</th><th></th></tr>
-      ${r.orders.map(o => `<tr><td>${(o.placed || '').replace('T', ' ').slice(0, 16)}</td><td><a href="${esc(o.url)}" target="_blank" rel="noopener">${esc(o.market_id)}</a> · sel ${o.selection_id}</td><td>${o.side}</td>
-        <td class="n">${o.price}</td><td class="n">${money(o.size || 0)}</td><td class="n">${money(o.matched || 0)}${o.avg_price ? ' @ ' + o.avg_price : ''}</td><td class="n">${money(o.remaining || 0)}</td><td>${o.status}</td>
+      ${r.orders.map(o => `<tr><td>${(o.placed || '').replace('T', ' ').slice(0, 16)}</td><td><a href="${esc(o.url)}" target="_blank" rel="noopener">${esc(o.market_id)}</a> · sel ${o.selection_id}</td><td>${o.side}</td><td class="n">${o.price}</td><td class="n">${money(o.size || 0)}</td><td class="n">${money(o.matched || 0)}</td><td class="n">${money(o.remaining || 0)}</td><td>${o.status}</td>
         <td>${(o.remaining || 0) > 0 ? `<button class="small ghost danger" data-cancel="${esc(o.market_id)}" data-bet="${esc(o.bet_id)}">Cancel unmatched</button>` : ''}</td></tr>`).join('')}</table>`;
     document.querySelectorAll('[data-cancel]').forEach(b => b.onclick = async () => {
       if (!confirm('Cancel the unmatched part of this order?')) return;
@@ -371,11 +422,38 @@ async function loadOpenBets() {
     });
   } catch (e) { el.innerHTML = `<div class="warn">! ${esc(e.message)}</div>`; }
 }
-async function settleJournal() {
-  const b = $('#settleBtn'); b.disabled = true; b.textContent = 'Checking results…';
-  try { const r = await api('/api/journal/settle', { method: 'POST' }); renderJournal(r); await loadStatus(); toast(r.settled ? `${r.settled} pick(s) settled.` : 'No new results yet.'); }
-  catch (e) { toast('Could not update: ' + e.message, 6000); }
-  b.disabled = false; b.textContent = 'Update results';
+
+// ---------------- performance & bankroll
+async function loadPerformance() {
+  try {
+    const r = await api('/api/stats'); const st = r.strategy_stats || {};
+    $('#perfNote').textContent = st.evidence_note || 'No statistics file yet.';
+    let html = '';
+    for (const sp of ['football', 'tennis']) {
+      const h = (st[sp] || {}).holdout; if (!h) continue;
+      const rows = Object.entries(h.by_strategy || {}).sort((a, b) => b[1].roi - a[1].roi).map(([k, v]) => {
+        const label = (sp === sport ? strategies.find(x => x.key === k) : null); return `<tr><td>${esc(label ? label.label : k)}</td><td class="n">${v.n}</td><td class="n">${pct(v.strike)}</td><td class="n">${pct(v.predicted)}</td><td class="n ${v.roi >= 0 ? 'pos' : 'neg'}">${spct(v.roi)}</td><td class="n">${spct(v.roi_ci_low)} … ${spct(v.roi_ci_high)}</td><td class="n">${v.profit_factor.toFixed(2)}</td><td class="n">${v.max_drawdown.toFixed(1)}</td><td class="n">${v.longest_losing_streak}</td><td class="meta">${esc(v.evidence)}</td></tr>`; }).join('');
+      html += `<div class="card"><h2>${sp === 'tennis' ? '🎾 Tennis' : '⚽ Football'} · holdout ${h.window[0]} to ${h.window[1]}</h2><div class="wrap"><table class="sc"><tr><th>Strategy</th><th class="n">Trades</th><th class="n">Strike</th><th class="n">Predicted</th><th class="n">ROI/unit</th><th class="n">95% CI</th><th class="n">Profit factor</th><th class="n">Max DD (units)</th><th class="n">Losing run</th><th>Evidence</th></tr>${rows}</table></div>
+        <p class="meta">Strike vs predicted tests calibration. ROI is at the model's own fair prices less friction, so it is a test of the plan structure, not of edge against the exchange.</p></div>`;
+    }
+    $('#perfTables').innerHTML = html || '<div class="card meta">Run <code>python -m tradescout.eval.holdout</code> to produce out-of-sample statistics.</div>';
+    const sg = r.signals || {};
+    $('#signalsSummary').innerHTML = sg.total ? `${sg.total} signals recorded · decisions ${esc(JSON.stringify(sg.by_decision))} · TRADE signals ${sg.trade_signals}, settled ${sg.trade_settled}, hits ${sg.trade_hits}, P/L ${sg.trade_pnl.toFixed(2)} units. This is the forward record: it only grows while the app scans live days with exchange prices.` : 'No signals yet. The log fills in as the app scans live days; with Betfair connected it records the prices seen, which is the only way to prove edge against the market.';
+  } catch (e) { $('#perfTables').innerHTML = `<div class="warn">! ${esc(e.message)}</div>`; }
+}
+async function loadBankroll() {
+  try {
+    await loadStatus(); const ex = status.exposure, L = status.limits;
+    $('#bankSummary').innerHTML = `
+      <div class="stat"><b>£${status.bank}</b><span>bank (Settings)</span></div>
+      <div class="stat"><b>£${ex.open_total.toFixed(2)}</b><span>open risk (${(100 * ex.open_total / status.bank).toFixed(1)}% of bank, cap ${(L.max_open_exposure * 100).toFixed(0)}%)</span></div>
+      <div class="stat"><b class="${ex.realised_today >= 0 ? 'pos' : 'neg'}">${money(ex.realised_today)}</b><span>realised today (limit -${(L.daily_loss_limit * 100).toFixed(0)}%)</span></div>
+      <div class="stat"><b class="${ex.realised_week >= 0 ? 'pos' : 'neg'}">${money(ex.realised_week)}</b><span>realised this week (limit -${(L.weekly_loss_limit * 100).toFixed(0)}%)</span></div>
+      <div class="stat"><b>${pct(ex.drawdown)}</b><span>drawdown from peak (stakes halve above ${(L.drawdown_halve * 100).toFixed(0)}%)</span></div>`;
+    $('#limitsList').innerHTML = `<ul><li>Fractional Kelly: ${(L.kelly_fraction * 100).toFixed(0)}% of full Kelly on the conservative probability</li><li>Max per trade: ${(L.max_per_trade * 100).toFixed(0)}% of bank</li><li>Max open exposure: ${(L.max_open_exposure * 100).toFixed(0)}%</li><li>Max per strategy: ${(L.max_per_strategy * 100).toFixed(0)}% · per sport: ${(L.max_per_sport * 100).toFixed(0)}%</li><li>Daily loss limit: ${(L.daily_loss_limit * 100).toFixed(0)}% · weekly: ${(L.weekly_loss_limit * 100).toFixed(0)}%</li><li>Exchange minimum stake £${L.min_stake}</li></ul><div>By strategy: ${esc(JSON.stringify(ex.by_strategy))} · by sport: ${esc(JSON.stringify(ex.by_sport))}</div>`;
+    const r = await api('/api/risk?p=0.55&win=1&loss=-1'); const ro = r.risk_of_ruin;
+    $('#ruin').innerHTML = `Risking ${(ro.fraction * 100).toFixed(2)}% per trade: probability of a 50% drawdown within 500 trades <b>${pct(ro.p_ruin)}</b>; median bank after 500 trades <b>${(ro.median_final * 100).toFixed(0)}%</b> of start; 5th percentile <b>${(ro.p5_final * 100).toFixed(0)}%</b>; chance of ending below start <b>${pct(ro.p_loss)}</b>.`;
+  } catch (e) { $('#ruin').innerHTML = `<div class="warn">! ${esc(e.message)}</div>`; }
 }
 
 // ---------------- settings
@@ -385,14 +463,14 @@ async function loadSettings() {
     $('#fdKey').value = ''; $('#fdKey').placeholder = s.has_football_key ? `saved: ${s.football_data_org_key}  (paste a new one to replace)` : 'paste the code from the email';
     $('#bfKey').value = ''; $('#bfKey').placeholder = s.betfair_app_key ? `saved: ${s.betfair_app_key}` : 'e.g. aBcDeFgHiJkLmNoP';
     $('#bfUser').value = s.betfair_username || ''; $('#bfPass').value = ''; $('#bfPass').placeholder = s.has_betfair_password ? 'saved (type to replace)' : '';
-    $('#bank').value = s.bank; $('#kelly').value = String(s.kelly_fraction);
+    $('#bank').value = s.bank; $('#kelly').value = String(s.kelly_fraction); $('#commission').value = (s.commission * 100).toFixed(1); $('#minEdge').value = (s.min_edge * 100).toFixed(1);
     $('#betMode').value = s.betting_mode || 'off'; $('#dailyCap').value = s.daily_cap;
-    $('#lightBetting').className = 'light ' + (s.betting_mode === 'live' ? 'on' : '');
-    $('#bettingInfo').textContent = s.betting_mode === 'live' ? `Live: £${(s.committed_today || 0).toFixed(2)} of £${s.daily_cap} committed today.` + (status.betfair ? '' : ' Betfair is not connected, so nothing can be placed until it is.') : '';
-    $('#lightFixtures').className = 'light ' + (status.live_fixtures ? 'on' : ''); $('#lightBetfair').className = 'light ' + (status.betfair ? 'on' : '');
+    $('#lightFixtures').className = 'light ' + (status.live_fixtures ? 'on' : ''); $('#lightBetfair').className = 'light ' + (status.betfair ? 'on' : ''); $('#lightBetting').className = 'light ' + (s.betting_mode === 'live' ? 'on' : '');
+    $('#bettingInfo').textContent = s.betting_mode === 'live' ? `Live: £${(s.committed_today || 0).toFixed(2)} of £${s.daily_cap} committed today.` + (status.betfair ? '' : ' Betfair is not connected, so nothing can be placed.') : '';
+    const [fb, tn] = await Promise.all([api('/api/strategies?sport=football'), api('/api/strategies?sport=tennis')]);
+    $('#stratToggles').innerHTML = [...fb.map(x => ({ ...x, sp: '⚽' })), ...tn.map(x => ({ ...x, sp: '🎾' }))].map(x => `<label class="togglerow"><input type="checkbox" value="${esc(x.key)}" ${x.enabled ? 'checked' : ''}> <span>${x.sp} <b>${esc(x.label)}</b> <span class="evidence">${esc(x.settlement)}</span>${x.holdout ? ` <span class="meta">holdout: ${x.holdout.n} trades, strike ${pct(x.holdout.strike)}, ROI ${spct(x.holdout.roi)}</span>` : ''}${x.enabled_default ? '' : ' <span class="meta">(off by default)</span>'}</span></label>`).join('');
     const lr = status.live_results || {};
-    $('#dataInfo').innerHTML = `Seasons loaded: ${status.seasons.join(', ')}.<br>Live results cache: ${lr.state}${lr.updated ? ' (updated ' + lr.updated + ')' : ''}.<br>Settings file: <code>${esc(s.env_path)}</code> (keep it private).`
-      + (status.betfair_error ? `<br><span class="warn">Betfair error: ${esc(status.betfair_error)}</span>` : '');
+    $('#dataInfo').innerHTML = `Football seasons loaded: ${status.seasons.join(', ')} (openfootball, public domain). Tennis results to ${status.tennis_data_to || '?'} (TML-Database mirror of the Sackmann layout, research use; a commercial release needs a licensed feed).<br>Live results cache: ${lr.state}${lr.updated ? ' (updated ' + lr.updated + ')' : ''}.<br>Settings file: <code>${esc(s.env_path)}</code> (keep it private).` + (status.betfair_error ? `<br><span class="warn">Betfair error: ${esc(status.betfair_error)}</span>` : '');
   } catch (e) { toast('Could not load settings: ' + e.message); }
 }
 async function saveSettings(body, resultSel) {
@@ -400,7 +478,7 @@ async function saveSettings(body, resultSel) {
   try {
     const r = await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     status = r.status; renderPills(); await loadSettings(); el.textContent = 'Saved.'; autoJumped = false; warnedBetfair = false;
-    await loadCalendar(status.today); scan(true);
+    await setSport(sport);
   } catch (e) { el.textContent = 'Error: ' + e.message; }
 }
 async function testConn(path, resultSel, okText) {
