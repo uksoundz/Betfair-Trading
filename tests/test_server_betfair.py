@@ -146,3 +146,21 @@ def test_tennis_scan_prices_exchange_fixtures(srv):
     r = c.get(f"/api/scan?date={DAY}&sport=tennis").json()
     assert r["fixtures"] >= 5 and r["priced"] == r["fixtures"] and r["price_source"] == "betfair"
     assert all(m["price_status"] == "ok" for m in r["matches"])
+
+
+def test_slip_blocks_lines_on_inplay_markets_and_reuses_cached_fixtures(srv):
+    server, c, ex = srv
+    m, i = _ideas(c, "TRADE")[0]
+    body = {"date": DAY, "match_id": m["id"], "strategy": i["strategy"], "sport": "football"}
+    ex.control({"inplay": [m["exchange_event"]]})
+    server.rt.betfair.invalidate()
+    try:
+        p = c.post("/api/betslip/preview", json=body).json()
+        assert all(l["blocked"] and l["market_status"] == "INPLAY" for l in p["lines"]) and not p["can_place"] and not p["override_allowed"]
+        assert any("in play" in x for x in p["place_block_reasons"])
+        assert c.post("/api/betslip/place", json={**body, "confirm": True, "override": True}).status_code == 409
+    finally:
+        ex.control({"inplay": []})
+        server.rt.betfair.invalidate()
+    assert f"football:{DAY}" in server.rt.fixture_cache
+    assert c.post("/api/betslip/preview", json={**body, "match_id": "nope"}).status_code == 404

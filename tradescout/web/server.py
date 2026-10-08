@@ -98,6 +98,7 @@ class Runtime:
             sc.scorer.limits = self.limits
             sc.scorer.kelly_fraction = settings.kelly_fraction
         self.cache: dict[str, tuple[float, dict]] = {}
+        self.fixture_cache: dict[str, list] = {}  # "sport:date" -> fixtures of the last scan (the slip reuses them: no refetch)
         self.lock = threading.Lock()
         self.last_signal: dict[str, float] = {}
         self.generation = time.time()
@@ -321,6 +322,7 @@ def _scan_cached(date_str: str, sport: str, refresh: str | bool = False) -> dict
             except Exception:
                 pass
         rt.cache[key] = (time.time(), result)
+        rt.fixture_cache[key] = list(scan.fixtures)
         return result
 
 
@@ -609,20 +611,31 @@ class PlaceIn(SlipIn):
 def _rebuild_idea(body) -> tuple:
     sport = _sport(body.sport)
     scout = rt.scout_for(sport)
-    with rt.lock:
+    try:
         on = date.fromisoformat(body.date)
-        fcaster = scout.forecaster(on)
-        fx = next((f for f in scout.fixtures.fixtures(on) if (f.fixture_id or f.label) == body.match_id), None)
-        if fx is None:
-            raise HTTPException(404, "match not found for that date")
-        fc = fcaster.forecast(fx)
-        strat = get_strategy(body.strategy)
-        prices = scout.prices.prices(fx)
-        r = strat.evaluate(fc, prices)
-        if r is None:
-            raise HTTPException(404, "strategy not available for that match")
-        rt.refresh_exposure()
-        idea = scout.scorer.score(fx, fc, strat, r, prices=prices, sport=sport)
+    except ValueError:
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    with rt.lock:
+        try:
+            fixtures = rt.fixture_cache.get(f"{sport}:{body.date}") or scout.fixtures.fixtures(on)
+            fx = next((f for f in fixtures if (f.fixture_id or f.label) == body.match_id), None)
+            if fx is None:
+                raise HTTPException(404, "match not found for that date")
+            fcaster = scout.forecaster(on)
+            fc = fcaster.forecast(fx)
+            strat = get_strategy(body.strategy)
+            prices = scout.prices.prices(fx)  # never raises: feed problems come back as status 'error'
+            r = strat.evaluate(fc, prices)
+            if r is None:
+                raise HTTPException(404, "strategy not available for that match")
+            rt.refresh_exposure()
+            idea = scout.scorer.score(fx, fc, strat, r, prices=prices, sport=sport)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            name = type(exc).__name__
+            code = 429 if name == "RateLimited" else 400 if name == "BadApiKey" else 502
+            raise HTTPException(code, str(exc) if name in ("RateLimited", "BadApiKey", "BetfairError") else f"Could not rebuild the plan: {exc}")
     floor = min_plan_stake(idea)
     if body.stake_money:
         stake = body.stake_money
@@ -640,7 +653,7 @@ def _price_client(sport: str):
 
 def _placement_gate(idea, slip) -> dict:
     """Why the Place button is on or off, spelled out. Placement is always user-confirmed per slip."""
-    sendable = [l for l in slip.lines if l.market_id and l.selection_id and not l.below_minimum]
+    sendable = [l for l in slip.lines if l.market_id and l.selection_id and not l.below_minimum and not l.blocked]
     reasons = []
     if settings.betting_mode != "live":
         reasons.append("Betting mode is " + ("Paper" if settings.betting_mode == "paper" else "Off") + ": switch it to Live in Settings > Betting to send orders.")
@@ -651,7 +664,10 @@ def _placement_gate(idea, slip) -> dict:
     if not slip.lines:
         reasons.append("This plan has no pre-match selections to place.")
     elif not sendable:
-        reasons.append("None of the lines could be found on the exchange (or they are below the minimum stake), so there is nothing to send.")
+        if any(l.blocked for l in slip.lines):
+            reasons.append("The market is " + ", ".join(sorted({(l.market_status or "").lower().replace("inplay", "in play") for l in slip.lines if l.blocked})) + ": pre-match orders cannot be placed now.")
+        else:
+            reasons.append("None of the lines could be found on the exchange (or they are below the minimum stake), so there is nothing to send.")
     hard_block = bool(reasons)
     override_needed = idea.decision != "TRADE"
     if override_needed:

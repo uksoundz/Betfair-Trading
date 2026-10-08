@@ -452,7 +452,7 @@ async function openSlip(m, strategy, stake, src) {
     $('#slipPlace').onclick = () => {
       if ($('#slipPlace').disabled) return;
       const override = !!($('#slipOverride') && $('#slipOverride').checked);
-      const sendable = s.lines.filter(l => l.market_id && !l.below_minimum);
+      const sendable = s.lines.filter(l => l.market_id && !l.below_minimum && !l.blocked);
       $('#slipConfirm').innerHTML = `<div class="banner err" style="margin-top:10px"><b>Confirm: send ${sendable.length} order${sendable.length === 1 ? '' : 's'} to Betfair now?</b>${override ? ' <span class="warn">(override: the app did not call this a TRADE)</span>' : ''}
         <ul style="margin:6px 0 6px 18px">${sendable.map(l => `<li>${l.side.toUpperCase()} ${esc(l.runner_name)} (${esc(l.market_label)}) at ${l.plan_price.toFixed(2)}, size ${money(l.size)}, risk ${money(l.liability)}</li>`).join('')}</ul>
         Total at risk ${money(sendable.reduce((a, l) => a + l.liability, 0))}. Limit orders at the plan price, lapsing at the start if unmatched. This uses real money.

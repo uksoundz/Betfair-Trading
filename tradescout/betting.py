@@ -90,6 +90,8 @@ class SlipLine:
     selection_id: Optional[int] = None
     betfair_url: Optional[str] = None  # opens this market on the Betfair website
     below_minimum: bool = False
+    blocked: bool = False              # market in play / suspended / closed: cannot be sent as a pre-match order
+    market_status: Optional[str] = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -151,13 +153,22 @@ def build_slip(idea: TradeIdea, stake_money: float, bf=None, min_stake: float = 
             line.warnings.append(f"Exchange minimum is £{min_stake:.2f} per bet (or £{MIN_STAKE_SMALL:.0f} when the payout reaches £{MIN_PAYOUT:.0f}); "
                                  f"this line is £{line.size:.2f}. Raise the stake or drop the line.")
         if bf is not None:
+            full = None
             try:
-                found = bf.resolve(fx, leg.market, leg.selection)
+                if hasattr(bf, "resolve_full"):
+                    full = bf.resolve_full(fx, leg.market, leg.selection)
+                    found = (full["market_id"], full["selection_id"], full["best_back"], full["best_lay"]) if full else None
+                else:
+                    found = bf.resolve(fx, leg.market, leg.selection)
             except Exception as exc:  # a price lookup failure must not kill the slip
                 found = None
                 line.warnings.append(f"Price lookup failed: {exc}")
             if found:
                 line.market_id, line.selection_id, best_back, best_lay = found
+                if full and full.get("status") not in (None, "OPEN"):
+                    line.blocked = True
+                    line.market_status = full["status"]
+                    line.warnings.append(f"Market is {full['status'].lower().replace('inplay', 'in play')}: a pre-match order cannot be placed now.")
                 line.betfair_url = BETFAIR_MARKET_URL.format(market_id=line.market_id)
                 live = best_back if leg.side == "back" else best_lay
                 line.live_price = live
@@ -234,10 +245,10 @@ def place_slip(slip: BetSlip, bf, customer_ref: str, daily_cap: float, committed
     One placeOrders call per market (Betfair places all-or-nothing within a call). If a later market is
     rejected after an earlier one was accepted, the unmatched part of the accepted lines is cancelled so
     the user is not left holding half a plan; anything already matched is reported as such."""
-    sendable = [l for l in slip.lines if l.market_id and l.selection_id and not l.below_minimum]
+    sendable = [l for l in slip.lines if l.market_id and l.selection_id and not l.below_minimum and not l.blocked]
     skipped = [l for l in slip.lines if l not in sendable]
     if not sendable:
-        return PlacementResult(False, [], 0.0, [], "Nothing to place: every line is unresolved or below the exchange minimum.")
+        return PlacementResult(False, [], 0.0, [], "Nothing to place: every line is unresolved, below the exchange minimum, or on a market that is not open.")
     committed = round(sum(l.liability for l in sendable), 2)
     if committed_today + committed > daily_cap + 1e-9:
         return PlacementResult(False, [], 0.0, [],
