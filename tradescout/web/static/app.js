@@ -211,20 +211,24 @@ async function openSlip(m, strategy, stake) {
       <td>${esc(l.market_label)}</td><td>${esc(l.runner_name)}</td><td>${l.side.toUpperCase()}</td>
       <td class="n">${l.plan_price.toFixed(2)}</td><td class="n">${l.live_price ? l.live_price.toFixed(2) : '-'} ${l.price_ok === true ? '<span class="ok">✓</span>' : l.price_ok === false ? '<span class="no">✗</span>' : ''}</td>
       <td class="n">${money(l.size)}</td><td class="n">${money(l.liability)}</td><td class="n">${money(l.payout)}</td>
-      <td class="meta">${esc(l.note)}${l.warnings.map(w => '<div class="warn">! ' + esc(w) + '</div>').join('')}</td></tr>`).join('');
+      <td class="meta">${esc(l.note)}${l.warnings.map(w => '<div class="warn">! ' + esc(w) + '</div>').join('')}</td>
+      <td>${l.betfair_url ? `<a class="small btnlink" href="${esc(l.betfair_url)}" target="_blank" rel="noopener">Open in Betfair ›</a>` : '<span class="meta" title="Connect Betfair in Settings to get direct market links">-</span>'}</td></tr>`).join('');
+    const urls = [...new Set(s.lines.map(l => l.betfair_url).filter(Boolean))];
     card.innerHTML = `<h2>Bet slip: ${esc(s.strategy_label)}</h2><div class="meta">${esc(s.fixture)} · ${s.date} · prices from ${s.price_source}</div>
       <div class="row" style="margin:10px 0"><label class="meta">Plan stake (unit risked) £ <input id="slipStake" type="number" min="2" step="1" value="${s.stake_money}" style="width:90px"></label>
         <button id="slipRecalc" class="small">Recalculate</button></div>
-      <div class="wrap"><table class="sc"><tr><th>Market</th><th>Selection</th><th>Side</th><th class="n">Plan price</th><th class="n">Live best</th><th class="n">Size</th><th class="n">Risk</th><th class="n">Wins</th><th>Notes</th></tr>${rows}
-        <tr class="sum"><td colspan="5">Total</td><td class="n">${money(s.total_staked)} staked</td><td class="n">${money(s.total_liability)} at risk</td><td></td><td></td></tr></table></div>
+      <div class="wrap"><table class="sc"><tr><th>Market</th><th>Selection</th><th>Side</th><th class="n">Plan price</th><th class="n">Live best</th><th class="n">Size</th><th class="n">Risk</th><th class="n">Wins</th><th>Notes</th><th></th></tr>${rows}
+        <tr class="sum"><td colspan="5">Total</td><td class="n">${money(s.total_staked)} staked</td><td class="n">${money(s.total_liability)} at risk</td><td></td><td></td><td></td></tr></table></div>
       ${s.warnings.map(w => `<div class="warn" style="margin-top:6px">! ${esc(w)}</div>`).join('')}
-      <p class="meta" style="margin-top:10px"><b>Size</b> is the backer's stake you enter on Betfair for each line (for a lay, Betfair works out the liability from it). <b>Live best</b> is the best price available now: ✓ means the plan price is there, ✗ means it is not, so set the plan price as a limit order and let it lapse at kick-off if unmatched.</p>
+      <p class="meta" style="margin-top:10px"><b>How to place it:</b> press <b>Open in Betfair</b> on a line (or <b>Open all markets</b>). On the Betfair page click the <b>${s.lines.some(l => l.side === 'lay') ? 'pink Lay' : 'blue Back'}</b> price for the selection shown, type the <b>Size</b> as your stake, set the odds to the <b>Plan price</b> if the market is not already there, and press Place bets. Betfair does not let outside apps pre-fill its betslip, so that last click is yours. ✓ means the plan price is available now; ✗ means it is not, so leave the order at the plan price and let it lapse at kick-off if unmatched.</p>
       <div class="row" style="margin-top:12px">
-        <button id="slipPaper" class="primary">Record as paper bet</button>
+        ${urls.length ? `<button id="slipOpenAll" class="primary">Open all markets in Betfair (${urls.length})</button>` : '<button class="primary" disabled title="Connect Betfair in Settings">Open in Betfair</button>'}
+        <button id="slipPaper">Record as paper bet</button>
         <button id="slipCopy">Copy slip</button>
         <button id="slipClose" class="ghost">Close</button>
-        <span class="meta">Sending orders to Betfair automatically is not switched on in this build. Place the lines above in your Betfair account, or record them here as a paper bet.</span>
-      </div>`;
+      </div>
+      ${urls.length ? '' : '<div class="meta" style="margin-top:8px">Connect Betfair in Settings and the slip links straight to each market, with the live price check filled in.</div>'}`;
+    if (urls.length) $('#slipOpenAll').onclick = () => { urls.forEach((u, k) => setTimeout(() => window.open(u, '_blank', 'noopener'), k * 150)); toast(urls.length > 1 ? 'Opening each market in a new tab. Allow pop-ups for this page if only one opened.' : 'Opening the market in Betfair.'); };
     $('#slipClose').onclick = () => modal.hidden = true;
     $('#slipRecalc').onclick = () => openSlip(m, strategy, +$('#slipStake').value);
     $('#slipCopy').onclick = async () => {

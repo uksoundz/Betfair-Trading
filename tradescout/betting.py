@@ -17,6 +17,7 @@ from typing import Optional
 from .models import Fixture, TradeIdea
 
 MIN_STAKE = 2.00  # Betfair GBP minimum per bet
+BETFAIR_MARKET_URL = "https://www.betfair.com/exchange/plus/football/market/{market_id}"
 
 # Betfair price ladder: (upper bound, tick)
 _LADDER = [(2.0, 0.01), (3.0, 0.02), (4.0, 0.05), (6.0, 0.1), (10.0, 0.2), (20.0, 0.5), (30.0, 1.0), (50.0, 2.0), (100.0, 5.0), (1000.0, 10.0)]
@@ -54,6 +55,7 @@ class SlipLine:
     price_ok: Optional[bool] = None     # live price at least as good as the plan price
     market_id: Optional[str] = None
     selection_id: Optional[int] = None
+    betfair_url: Optional[str] = None  # opens this market on the Betfair website
     below_minimum: bool = False
     warnings: list[str] = field(default_factory=list)
 
@@ -116,6 +118,7 @@ def build_slip(idea: TradeIdea, stake_money: float, bf=None, min_stake: float = 
                 line.warnings.append(f"Price lookup failed: {exc}")
             if found:
                 line.market_id, line.selection_id, best_back, best_lay = found
+                line.betfair_url = BETFAIR_MARKET_URL.format(market_id=line.market_id)
                 live = best_back if leg.side == "back" else best_lay
                 line.live_price = live
                 source = "betfair"

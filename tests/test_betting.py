@@ -36,6 +36,7 @@ def test_slip_sizes_and_prices(provider):
     main, ins = slip.lines
     assert main.size == pytest.approx(16.0) and ins.size == pytest.approx(4.0)
     assert main.market_id == "1.100" and main.selection_id == 47972 and main.live_price == 1.95
+    assert main.betfair_url == "https://www.betfair.com/exchange/plus/football/market/1.100"
     assert slip.price_source == "betfair" and slip.total_staked == pytest.approx(20.0)
     ltd = next(i for i in scan.ideas if i.strategy == "ltd")
     slip = build_slip(ltd, 10.0, FakeBetfair())
@@ -52,4 +53,4 @@ def test_slip_flags_minimum_and_missing_connection(provider):
     slip = build_slip(overs, 5.0, None)
     assert slip.lines[1].below_minimum and slip.lines[1].size < MIN_STAKE
     assert any("not connected" in w for w in slip.warnings)
-    assert slip.price_source == "model"
+    assert slip.price_source == "model" and slip.lines[0].betfair_url is None

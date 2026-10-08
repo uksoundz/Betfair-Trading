@@ -25,9 +25,11 @@ TradeScout. Keep the black window open while you use it.
   details for real prices. Each has a **Test** button. Set your bank and staking style here too.
 * **Bet slip**: on any plan press **Bet slip**. It lists every pre-match selection with the
   market, side, plan price, the best price available on Betfair right now (✓ if the plan price is
-  there), the size to enter and what is at risk. Change the stake and recalculate. **Record as
-  paper bet** logs it in My picks; **Copy slip** puts it on the clipboard to key into Betfair.
-  This build does not send orders to Betfair itself.
+  there), the size to enter and what is at risk. Change the stake and recalculate. With Betfair
+  connected, **Open in Betfair** takes you straight to each market: click the price for the
+  selection shown, type the size, press Place bets. Betfair does not allow outside apps to
+  pre-fill its betslip, so that final click is always yours. **Record as paper bet** logs the
+  slip in My picks; **Copy slip** puts it on the clipboard.
 * **Past dates** show the real result and whether each plan paid off.
 
 ### Set up in the app (instead of setup.bat)
