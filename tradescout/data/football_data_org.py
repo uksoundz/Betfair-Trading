@@ -13,7 +13,11 @@ from ..models import Fixture, MatchResult
 from .names import canonical
 
 BASE = "https://api.football-data.org/v4"
-UK_TZ = ZoneInfo("Europe/London")
+try:
+    UK_TZ = ZoneInfo("Europe/London")
+except Exception:  # Windows without the tzdata package: fall back to UTC (an hour out in summer, never a crash)
+    from datetime import timezone as _tz
+    UK_TZ = _tz.utc
 COMPETITIONS = {  # openfootball code -> football-data.org code
     "en.1": "PL",
     "en.2": "ELC",

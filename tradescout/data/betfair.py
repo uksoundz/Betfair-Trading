@@ -41,7 +41,11 @@ CERT_HOSTS = {k: v.replace("identitysso.", "identitysso-cert.") for k, v in IDEN
 BETTING_DEFAULT = "https://api.betfair.com/exchange/betting/json-rpc/v1"
 ACCOUNTS_DEFAULT = "https://api.betfair.com/exchange/account/json-rpc/v1"
 MARKETS = ["MATCH_ODDS", "OVER_UNDER_15", "OVER_UNDER_25", "OVER_UNDER_35", "BOTH_TEAMS_TO_SCORE", "CORRECT_SCORE"]
-UK_TZ = ZoneInfo("Europe/London")
+try:
+    UK_TZ = ZoneInfo("Europe/London")
+except Exception:  # Windows without the tzdata package: fall back to UTC (an hour out in summer, never a crash)
+    from datetime import timezone as _tz
+    UK_TZ = _tz.utc
 EVENT_TTL = 600        # seconds an event list / catalogue is reused
 BOOK_CHUNK = 25        # markets per listMarketBook call (EX_BEST_OFFERS weighs 5 each, limit 200)
 CATALOGUE_CHUNK = 60   # events per listMarketCatalogue call (6 market types each, maxResults 1000)
