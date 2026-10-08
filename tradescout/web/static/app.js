@@ -108,24 +108,31 @@ async function stripStart() {
   return d < status.today ? isoShift(d, -3) : status.today;
 }
 
+let scanSeq = 0;
 async function scan(refresh = false) {
   const d = $('#date').value; if (!d) return;
+  const seq = ++scanSeq, mySport = sport;  // a newer scan (date or sport change) makes this one stale
   const start = await stripStart();
   if (start !== status.today && !calendar[d] && !calendar[isoShift(d, 1)]) { await loadCalendar(start); } else { renderDayStrip(start); }
   $('#banner').innerHTML = ''; $('#matchList').innerHTML = '<div class="spinner">Scanning ' + d + '…</div>'; $('#detail').innerHTML = ''; $('#picks').innerHTML = '<div class="spinner">Scanning…</div>';
-  try { data = await api(`/api/scan?date=${d}&sport=${sport}${refresh ? '&refresh=true' : ''}`); selected = null; dataOther = null; }
+  let fresh;
+  try { fresh = await api(`/api/scan?date=${d}&sport=${mySport}${refresh ? '&refresh=true' : ''}`); }
   catch (e) {
+    if (seq !== scanSeq) return;
     data = null; $('#picks').innerHTML = ''; $('#matchList').innerHTML = '';
     $('#banner').innerHTML = `<div class="banner err"><b>Could not scan ${d}.</b> ${esc(e.message)}${/key|Betfair|Settings/i.test(e.message) ? ' <a href="#" data-go="settings">Open Settings</a>' : ''}</div>`;
     document.querySelectorAll('#banner a').forEach(a => a.onclick = (ev) => { ev.preventDefault(); showView(a.dataset.go); });
     return;
   }
+  if (seq !== scanSeq) return;  // superseded while loading: drop it
+  data = fresh; selected = null; dataOther = null;
   const dec = data.decisions || {};
   $('#scanmeta').textContent = `${data.fixtures} fixtures · ${data.ideas} ideas · ${dec.TRADE || 0} TRADE · ${dec['NO TRADE'] || 0} no trade · ${dec.RESEARCH || 0} research · model on ${data.model_matches.toLocaleString()} matches`;
   if (!data.matches.length) {
     const up = data.upcoming || {}; const nextDay = Object.keys(up)[0]; const blank = data.weekday;
     if (!autoJumped && nextDay) {
       autoJumped = true; $('#date').value = nextDay; await scan();
+      if (seq + 1 !== scanSeq) return;  // something else moved on in the meantime
       $('#banner').innerHTML = `<div class="banner">No ${sport} in the covered competitions on <b>${blank}</b>, so this is the next match day.${sport === 'tennis' && !status.tennis_live ? ' Tennis is in replay mode: connect Betfair in Settings for live ATP fixtures and prices.' : ''}</div>`;
       return;
     }
