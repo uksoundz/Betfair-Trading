@@ -64,7 +64,8 @@ def idea_verdict(hit: float, roi: float, edge: float | None, score: float, decis
     if decision == "TRADE":
         head = f"TRADE. Conservative net edge {ev_cons:+.1%} per unit risked after commission." if ev_cons is not None else "TRADE."
     elif decision == "NO TRADE":
-        head = "NO TRADE: no proven advantage at the current exchange price" + (f" (conservative edge {ev_cons:+.1%})." if ev_cons is not None else ".")
+        head = ("NO TRADE: no proven advantage at the current exchange price" + f" (conservative edge {ev_cons:+.1%})." if ev_cons is not None
+                else "NO TRADE: the exchange has no reliable price for this yet (empty market or the match has started), so no edge can be claimed.")
     else:
         head = "RESEARCH ONLY: no exchange price, so no advantage can be claimed."
     tail = f" The plan pays off about {hit:.0%} of the time; modelled return {roi:+.1%} per unit risked."

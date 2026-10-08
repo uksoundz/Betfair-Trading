@@ -516,9 +516,9 @@ function whyNoTrade(src) {
     priced++;
     if (i.ev_conservative != null && (best == null || i.ev_conservative > best.ev_conservative)) best = i;
     const txt = (i.decision_reasons || []).join(' '); let any = false;
-    if (/started|in play/i.test(txt)) { bump('match already in play'); any = true; }
+    if (i.m.price_status === 'inplay' || /^The match has started/.test(txt)) { bump('match already in play'); any = true; }
+    if (/No reliable exchange price/i.test(txt)) { bump('no reliable market price yet (empty market; check nearer kick-off)'); any = true; }
     if (/below/i.test(txt)) { bump(/plan structure costs/i.test(txt) ? 'edge below the threshold once in-play exit costs are charged' : 'edge below the threshold after commission'); any = true; }
-    if (/too wide for the market/i.test(txt)) { bump('spread far too wide to price yet (check nearer kick-off)'); any = true; }
     if (/not on offer right now/i.test(txt)) { bump('plan price not on offer yet (order would rest until kick-off; not a blocker)'); }
     if (/matched so far: thin now/i.test(txt)) { bump('thin now (not a blocker: fills by kick-off if the price comes)'); }
     if (/too old/i.test(txt)) { bump('prices too old'); any = true; }

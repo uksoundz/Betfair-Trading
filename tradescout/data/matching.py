@@ -30,8 +30,8 @@ from .names import canonical
 
 NOISE = {"fc", "afc", "cf", "sc", "ac", "as", "ss", "us", "ssc", "rc", "rcd", "ud", "cd", "sd", "ca", "club", "de", "do", "da", "la", "le", "les", "el",
          "and", "calcio", "balompie", "futbol", "hsc", "osc", "sco", "cfc", "bc", "acf", "sv", "tsg", "vfb", "vfl", "fsv", "bsc", "fk", "nk", "sk", "ks",
-         "bk", "ik", "aj", "es", "ogc", "the", "of", "1", "04", "05", "07", "29", "1846", "1848", "1899", "1901", "1907", "1909", "1910", "1913", "i", "ii",
-         "football", "soccer", "team"}
+         "bk", "ik", "aj", "es", "ogc", "the", "of", "1", "04", "05", "07", "29", "65", "1846", "1848", "1899", "1901", "1907", "1909", "1910", "1913", "i", "ii",
+         "football", "soccer", "team", "clube", "sad", "futebol", "gd", "cf", "e", "cp", "rotterdam", "almelo", "nijmegen", "sittard", "zwolle", "praia"}
 LOW_WEIGHT = {"united", "city", "town", "rovers", "wanderers", "county", "albion", "athletic", "atletico", "hotspur", "north", "end", "real", "borussia",
               "racing", "sporting", "olympique", "stade", "deportivo", "dynamo", "dinamo", "spartak", "lokomotiv", "eintracht", "hellas", "alsace",
               "milano", "madrid", "barcelona", "vigo", "bremen", "frankfurt", "san", "sport", "association", "club", "fc"}
@@ -59,6 +59,13 @@ NAME_ALIASES = {
     "nice": "OGC Nice", "reims": "Stade de Reims", "verona": "Hellas Verona FC", "hellas verona": "Hellas Verona FC", "sheff wed": "Sheffield Wednesday FC",
     "sheffield wed": "Sheffield Wednesday FC", "sheff utd": "Sheffield United FC", "west brom": "West Bromwich Albion FC", "qpr": "Queens Park Rangers FC",
     "nottm forest": "Nottingham Forest FC", "man utd": "Manchester United FC", "man city": "Manchester City FC", "newcastle": "Newcastle United FC",
+    # Portugal (football-data.org spellings) and the Netherlands
+    "sporting lisbon": "Sporting Clube de Portugal", "sporting cp": "Sporting Clube de Portugal", "sporting": "Sporting Clube de Portugal",
+    "braga": "Sporting Clube de Braga", "sc braga": "Sporting Clube de Braga", "benfica": "Sport Lisboa e Benfica", "sl benfica": "Sport Lisboa e Benfica",
+    "porto": "FC Porto", "fc porto": "FC Porto", "guimaraes": "Vitória SC", "vitoria guimaraes": "Vitória SC", "vitoria sc": "Vitória SC",
+    "famalicao": "FC Famalicão", "estoril": "GD Estoril Praia", "estrela amadora": "CF Estrela da Amadora", "avs": "AVS Futebol SAD",
+    "az alkmaar": "AZ", "az": "AZ", "nec nijmegen": "NEC", "nec": "NEC", "heracles": "Heracles Almelo", "fc twente": "FC Twente '65", "twente": "FC Twente '65",
+    "feyenoord": "Feyenoord Rotterdam", "ajax": "AFC Ajax", "psv": "PSV", "psv eindhoven": "PSV", "heerenveen": "SC Heerenveen", "volendam": "FC Volendam",
     "brighton": "Brighton & Hove Albion FC", "bournemouth": "AFC Bournemouth", "oxford utd": "Oxford United FC", "mk dons": "Milton Keynes Dons FC",
 }
 _strip_re = re.compile(r"[^a-z0-9 ]+")

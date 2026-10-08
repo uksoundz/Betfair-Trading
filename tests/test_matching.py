@@ -24,6 +24,12 @@ MUST_MATCH = [
     ("Parma", "Parma Calcio 1913"), ("Blackburn", "Blackburn Rovers FC"), ("Bolton", "Bolton Wanderers FC"), ("Derby", "Derby County FC"), ("Swansea", "Swansea City AFC"),
     ("West Ham", "West Ham United FC"), ("Wrexham", "Wrexham AFC"), ("Stoke", "Stoke City FC"), ("Norwich", "Norwich City FC"), ("Middlesbrough", "Middlesbrough FC"),
     ("Boro", "Middlesbrough FC"), ("Man United", "Manchester United FC"), ("Manchester United", "Manchester United FC"),
+    ("Braga", "Sporting Clube de Braga"), ("Sporting Lisbon", "Sporting Clube de Portugal"), ("Benfica", "Sport Lisboa e Benfica"), ("Porto", "FC Porto"),
+    ("Guimaraes", "Vitória SC"), ("Famalicao", "FC Famalicão"), ("Rio Ave", "Rio Ave FC"), ("Gil Vicente", "Gil Vicente FC"), ("Casa Pia", "Casa Pia AC"),
+    ("Santa Clara", "CD Santa Clara"), ("Nacional", "CD Nacional"), ("Estoril", "GD Estoril Praia"), ("Arouca", "FC Arouca"), ("Moreirense", "Moreirense FC"),
+    ("PSV", "PSV"), ("Heerenveen", "SC Heerenveen"), ("Ajax", "AFC Ajax"), ("Feyenoord", "Feyenoord Rotterdam"), ("Az Alkmaar", "AZ"), ("FC Twente", "FC Twente '65"),
+    ("FC Utrecht", "FC Utrecht"), ("FC Groningen", "FC Groningen"), ("NEC Nijmegen", "NEC"), ("Go Ahead Eagles", "Go Ahead Eagles"), ("Sparta Rotterdam", "Sparta Rotterdam"),
+    ("Fortuna Sittard", "Fortuna Sittard"), ("PEC Zwolle", "PEC Zwolle"), ("Heracles", "Heracles Almelo"), ("NAC Breda", "NAC Breda"), ("Volendam", "FC Volendam"),
 ]
 MUST_NOT = [
     ("Man Utd", "Manchester City FC"), ("Sheff Wed", "Sheffield United FC"), ("Inter", "AC Milan"), ("AC Milan", "FC Internazionale Milano"),
@@ -31,6 +37,7 @@ MUST_NOT = [
     ("West Brom", "West Ham United FC"), ("Dortmund", "Borussia Mönchengladbach"), ("Athletic Bilbao", "Club Atlético de Madrid"), ("Union Berlin", "Hertha BSC"),
     ("Nottingham Forest", "Notts County FC"), ("Valencia", "Valenciennes FC"), ("Monza", "AS Monaco FC"), ("Parma", "Paris FC"), ("Leeds", "Leicester City FC"),
     ("Burnley", "Burton Albion FC"), ("Stoke", "Stockport County FC"), ("Man Utd", "Manchester City FC"),
+    ("Braga", "Sporting Clube de Portugal"), ("Sporting Lisbon", "Sporting Clube de Braga"), ("Sparta Rotterdam", "Feyenoord Rotterdam"),
 ]
 
 

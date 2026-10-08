@@ -38,7 +38,7 @@ def test_assess_decisions():
     # a wide spread shades execution and is noted; only a spread so wide the mid means nothing blocks
     wide = Quote(back=[(2.40, 500.0)], lay=[(2.70, 500.0)], total_matched=50000)
     d = assess(0.55, "back", wide, 2.40, 20.0, "MATCH_ODDS", 1.0, 0.05, 0.02, 0.04)
-    assert d.decision == "NO TRADE" and any("too wide" in r for r in d.reasons)
+    assert d.decision == "NO TRADE" and not d.price_reliable and any("No reliable exchange price" in r for r in d.reasons)
     moderately = Quote(back=[(2.40, 500.0)], lay=[(2.56, 500.0)], total_matched=50000)  # 6.7%: noted, shaded, not blocked
     d2 = assess(0.55, "back", moderately, 2.40, 20.0, "MATCH_ODDS", 1.0, 0.05, 0.02, 0.04)
     assert d2.decision == "TRADE" and d2.execution < a.execution and any("wide right now" in r for r in d2.reasons)

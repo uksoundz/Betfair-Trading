@@ -120,6 +120,7 @@ class ValueAssessment:
     fill_fraction: Optional[float]
     execution: float                # 0..1 quality of execution (fill x spread x liquidity)
     liability_per_unit: float       # what 1 unit of stake puts at risk (1 for backs, price-1 for lays per stake)
+    price_reliable: bool = True     # False when the market is so empty that its implied probability means nothing
 
     def to_dict(self) -> dict:
         return self.__dict__.copy()
@@ -180,7 +181,7 @@ def assess(p_model: float, side: str, quote: Optional[Quote], limit_price: Optio
         reasons.append(f"Conservative net edge {ev_cons:+.1%} per unit risked is below the {min_edge:.0%} threshold after {commission:.0%} commission.")
     if spread_unreliable:
         decision = "NO TRADE"
-        reasons.append(f"Back/lay spread {spread:.0%} is too wide for the market to tell us anything yet; check again nearer kick-off.")
+        reasons.append(f"No reliable exchange price yet: back/lay spread {spread:.0%} (the market is empty), so no edge can be claimed either way; check again nearer kick-off.")
     elif spread_wide:
         reasons.append(f"Spread {spread:.1%} is wide right now (above {max_spread:.0%}): the market's own probability is uncertain, so the edge estimate is rough.")
     if not liquidity_ok:
@@ -198,4 +199,4 @@ def assess(p_model: float, side: str, quote: Optional[Quote], limit_price: Optio
         reasons.append(f"Conservative net edge {ev_cons:+.1%} per unit risked after commission; market implies {p_mkt:.1%}, model {p_model:.1%}.")
     liability = 1.0 if side == "back" else (eff_price - 1)
     return ValueAssessment(decision, reasons, p_model, p_mkt, p_blend, p_cons, round(eff_price, 2), ev_model, ev_blend, ev_cons,
-                           spread, fill.fraction, round(execution, 3), liability)
+                           spread, fill.fraction, round(execution, 3), liability, not spread_unreliable)

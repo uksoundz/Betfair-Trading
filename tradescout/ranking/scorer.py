@@ -114,9 +114,15 @@ class Scorer:
             execution = float(min(l.execution for l in legs))
             decision = "TRADE" if (all(l.decision == "TRADE" for l in legs) and ev_cons >= settings.min_edge) else "NO TRADE"
             reasons = [x for l in legs for x in l.reasons]
-            if strategy.inplay and abs(plan_adjust) > 0.002:
+            if not all(l.price_reliable for l in legs):
+                # the market has no real price for a leg: an edge computed against it is noise, so none is shown
+                ev_cons = ev_model = p_cons = p_mkt = None
+                execution = 0.0
+                decision = "NO TRADE"
+                reasons = [x for l in legs for x in l.reasons if "No reliable exchange price" in x] or ["No reliable exchange price yet."]
+            if ev_cons is not None and strategy.inplay and abs(plan_adjust) > 0.002:
                 reasons.append(f"In-play plan structure {'costs' if plan_adjust < 0 else 'adds'} {abs(plan_adjust):.1%} per unit versus holding the entry bet (modelled exits, friction, commission).")
-            if decision == "NO TRADE" and ev_cons < settings.min_edge and not any("below" in x for x in reasons):
+            if decision == "NO TRADE" and ev_cons is not None and ev_cons < settings.min_edge and not any("below" in x for x in reasons):
                 reasons.append(f"Combined conservative net edge {ev_cons:+.1%} is below the {settings.min_edge:.0%} threshold.")
             evidence = "exchange-priced-static" if strategy.key in STATIC_STRATEGIES else "simulated-inplay"
         else:
