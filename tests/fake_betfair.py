@@ -125,6 +125,10 @@ class FakeExchange:
         self.inplay: set[str] = set()
         self.suspend: set[str] = set()
         self.delay_ms = 0
+        self.reject_market_types: set[str] = set()   # placeOrders on these market types fails (e.g. MARKET_SUSPENDED)
+        self.timeout_market_types: set[str] = set()  # placeOrders on these answers TIMEOUT but still places the order
+        self.recent_refs: dict[str, float] = {}      # customerRef -> time, for DUPLICATE_TRANSACTION within 60 s
+        self.catalogue_requests: list[dict] = []
         self._days: dict[str, dict] = {}
         self._lock = threading.Lock()
         self._next_id = 10_000
@@ -356,6 +360,11 @@ class FakeExchange:
             for e in self._events_in(params):
                 ids.add(e["event"]["id"])
         proj = set(params.get("marketProjection") or [])
+        weight = (1 if "MARKET_DESCRIPTION" in proj else 0) + (1 if "RUNNER_METADATA" in proj else 0)
+        max_results = int(params.get("maxResults") or 1000)
+        self.catalogue_requests.append({"maxResults": max_results, "weight": weight, "events": len(ids)})
+        if weight * max_results > 200:
+            raise ValueError("TOO_MUCH_DATA")
         out = []
         for m in self._all_markets().values():
             if ids and m["_event"] not in ids:
@@ -377,7 +386,7 @@ class FakeExchange:
                 row["competition"] = m["competition"]
             out.append(row)
         out.sort(key=lambda r: r["marketId"])
-        return out[: int(params.get("maxResults") or 1000)]
+        return out[:max_results]
 
     def _m_listMarketBook(self, params: dict) -> list[dict]:
         mids = params.get("marketIds") or []
@@ -401,6 +410,17 @@ class FakeExchange:
     def _m_placeOrders(self, params: dict) -> dict:
         mid = params.get("marketId")
         m = self._all_markets().get(mid)
+        ref = str(params.get("customerRef") or "")
+        if ref and time.time() - self.recent_refs.get(ref, 0) < 60:
+            return {"customerRef": ref, "status": "FAILURE", "errorCode": "DUPLICATE_TRANSACTION", "marketId": mid,
+                    "instructionReports": [{"status": "FAILURE", "errorCode": "DUPLICATE_TRANSACTION", "instruction": i} for i in params.get("instructions") or []]}
+        if ref:
+            self.recent_refs[ref] = time.time()
+        mtype = m["description"]["marketType"] if m else None
+        if mtype in self.reject_market_types:
+            return {"customerRef": ref, "status": "FAILURE", "errorCode": "BET_ACTION_ERROR", "marketId": mid,
+                    "instructionReports": [{"status": "FAILURE", "errorCode": "MARKET_SUSPENDED", "instruction": i} for i in params.get("instructions") or []]}
+        timeout = mtype in self.timeout_market_types
         reports = []
         ok_all = True
         for ins in params.get("instructions") or []:
@@ -425,8 +445,12 @@ class FakeExchange:
                      "orderType": "LIMIT", "placedDate": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
                      "averagePriceMatched": best if matched else 0.0, "sizeMatched": size if matched else 0.0, "sizeRemaining": 0.0 if matched else size,
                      "sizeLapsed": 0.0, "sizeCancelled": 0.0, "sizeVoided": 0.0, "regulatorCode": "GIBRALTAR REGULATOR",
-                     "customerStrategyRef": params.get("customerStrategyRef"), "customerRef": params.get("customerRef")}
+                     "customerStrategyRef": params.get("customerStrategyRef"), "customerRef": params.get("customerRef"),
+                     "customerOrderRef": ins.get("customerOrderRef")}
             self.orders.append(order)
+            if timeout:
+                reports.append({"status": "TIMEOUT", "instruction": ins})
+                continue
             reports.append({"status": "SUCCESS", "instruction": ins, "betId": bet_id, "placedDate": order["placedDate"], "averagePriceMatched": order["averagePriceMatched"],
                             "sizeMatched": order["sizeMatched"], "orderStatus": order["status"]})
         out = {"customerRef": params.get("customerRef"), "status": "SUCCESS" if ok_all else "FAILURE", "marketId": mid, "instructionReports": reports}
@@ -472,6 +496,11 @@ class FakeExchange:
             self.delay_ms = int(body["delay_ms"])
         if body.get("reset_orders"):
             self.orders.clear()
+            self.recent_refs.clear()
+        if "reject_market_types" in body:
+            self.reject_market_types = set(body["reject_market_types"] or [])
+        if "timeout_market_types" in body:
+            self.timeout_market_types = set(body["timeout_market_types"] or [])
         if body.get("reset_calls"):
             self.calls.clear()
         return self.state()

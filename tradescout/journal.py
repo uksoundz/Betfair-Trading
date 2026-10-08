@@ -77,15 +77,34 @@ class Journal:
         self.save()
         return e
 
-    def attach_slip(self, entry_id: str, legs: list, placed: str = "paper", refs: list | None = None, total: float = 0.0) -> None:
+    def attach_slip(self, entry_id: str, legs: list, placed: str = "paper", refs: list | None = None, total: float = 0.0,
+                    note: str | None = None, stake_money: float | None = None) -> None:
+        """Record a slip on an entry. A second live placement of the same plan adds to the money committed
+        and the bet ids rather than replacing them, so the daily cap sees everything that was sent."""
         for e in self.entries:
             if e.id == entry_id:
-                e.slip = list(legs)
+                if placed == "live" and e.placed == "live":
+                    e.slip = list(e.slip) + list(legs)
+                    e.bet_refs = list(e.bet_refs) + list(refs or [])
+                    e.placed_total = round(e.placed_total + total, 2)
+                else:
+                    e.slip = list(legs)
+                    e.bet_refs = list(refs or [])
+                    e.placed_total = round(total, 2)
                 e.placed = placed
-                e.bet_refs = list(refs or [])
-                e.placed_total = round(total, 2)
+                if note:
+                    e.note = note if not e.note or e.note == note else f"{e.note}; {note}"
+                if stake_money is not None:
+                    e.stake_money = round(stake_money, 2)
                 break
         self.save()
+
+    def live_entry(self, fixture, strategy: str):
+        """The journal entry already placed live for this plan today, if any."""
+        for e in self.entries:
+            if e.date == fixture.date.isoformat() and e.home == fixture.home and e.away == fixture.away and e.strategy == strategy and e.placed == "live":
+                return e
+        return None
 
     def committed_today(self, mode: str = "live") -> float:
         """Money sent to the exchange today in the given mode; used for the daily cap."""

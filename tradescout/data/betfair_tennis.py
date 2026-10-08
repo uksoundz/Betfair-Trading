@@ -14,7 +14,7 @@ from typing import Iterable, Optional
 
 from ..models import Fixture, MarketPrices
 from ..value import Quote
-from .betfair import BetfairPrices, FeedReport, _now, _starts_in_future, market_detail
+from .betfair import UK_TZ, BetfairPrices, FeedReport, _now, _starts_in_future, market_detail
 from .matching import fold
 
 TENNIS_EVENT_TYPE = "2"
@@ -178,7 +178,7 @@ class BetfairTennis:
             if wanted and league not in wanted:
                 continue
             try:
-                ko = datetime.fromisoformat((start or ev.get("openDate", "")).replace("Z", "+00:00")).astimezone()
+                ko = datetime.fromisoformat((start or ev.get("openDate", "")).replace("Z", "+00:00")).astimezone(UK_TZ)
             except ValueError:
                 continue
             if ko.date() != on:

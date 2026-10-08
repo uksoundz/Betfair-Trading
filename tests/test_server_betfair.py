@@ -164,3 +164,65 @@ def test_slip_blocks_lines_on_inplay_markets_and_reuses_cached_fixtures(srv):
         server.rt.betfair.invalidate()
     assert f"football:{DAY}" in server.rt.fixture_cache
     assert c.post("/api/betslip/preview", json={**body, "match_id": "nope"}).status_code == 404
+
+
+def test_track_keeps_the_advised_stake_but_the_slip_floors_it(srv):
+    server, c, ex = srv
+    m, i = _ideas(c, "NO TRADE")[3]
+    body = {"date": DAY, "match_id": m["id"], "strategy": i["strategy"], "sport": "football"}
+    r = c.post("/api/journal", json=body).json()
+    assert r["entry"]["stake_money"] == 2.0  # advised unit for a NO TRADE: nothing inflated for the record
+    p = c.post("/api/betslip/preview", json=body).json()
+    assert p["stake_money"] >= p["stake_floor"] >= 2.0
+
+
+def test_override_is_logged_even_when_the_idea_was_tracked_first(srv):
+    server, c, ex = srv
+    m, i = _ideas(c, "NO TRADE")[1]
+    body = {"date": DAY, "match_id": m["id"], "strategy": i["strategy"], "sport": "football"}
+    c.post("/api/journal", json=body)
+    r = c.post("/api/betslip/place", json={**body, "confirm": True, "override": True}).json()
+    assert r["ok"] and r["override"]
+    e = next(e for e in server.journal.entries if e.home == m["home"] and e.strategy == i["strategy"])
+    assert "override" in e.note and e.placed == "live" and e.placed_total > 0
+    # placing the same plan again adds to the money committed rather than replacing it, and needs the override
+    p = c.post("/api/betslip/preview", json=body).json()
+    assert p["already_placed"] and any("Already placed" in x for x in p["place_block_reasons"]) and not p["can_place"]
+    ex.recent_refs.clear()
+    before = e.placed_total
+    r2 = c.post("/api/betslip/place", json={**body, "confirm": True, "override": True}).json()
+    assert r2["ok"] and e.placed_total > before and len(e.bet_refs) >= 2
+
+
+def test_per_trade_cap_and_risk_engine_blocks(srv, monkeypatch):
+    server, c, ex = srv
+    m, i = _ideas(c, "TRADE")[0]
+    body = {"date": DAY, "match_id": m["id"], "strategy": i["strategy"], "sport": "football", "stake_money": 60.0}
+    p = c.post("/api/betslip/preview", json=body).json()
+    assert not p["can_place"] and p["override_allowed"] and any("per-trade cap" in x for x in p["place_block_reasons"])
+    assert c.post("/api/betslip/place", json={**body, "confirm": True}).status_code == 409
+    # the risk engine saying no (loss limit reached) is a hard block, override or not
+    from tradescout.risk import Exposure
+    monkeypatch.setattr(server, "exposure_from_journal", lambda entries, bank: Exposure(current_bank=500.0, peak_bank=500.0, realised_today=-50.0))
+    server.rt.cache.clear()
+    p2 = c.post("/api/betslip/preview", json={k: v for k, v in body.items() if k != "stake_money"}).json()
+    assert not p2["can_place"] and not p2["override_allowed"] and any("risk engine" in x for x in p2["place_block_reasons"])
+    monkeypatch.undo()
+    server.rt.cache.clear()
+
+
+def test_research_idea_is_never_placeable(srv):
+    server, c, ex = srv
+    m, i = _ideas(c, "TRADE")[0]
+    body = {"date": DAY, "match_id": m["id"], "strategy": i["strategy"], "sport": "football"}
+    ex.control({"fail_login": True, "expire_sessions": True})
+    server.rt.betfair.invalidate()
+    try:
+        p = c.post("/api/betslip/preview", json=body).json()
+        assert p["decision"] == "RESEARCH" and not p["can_place"] and not p["override_allowed"]
+        assert c.post("/api/betslip/place", json={**body, "confirm": True, "override": True}).status_code in (400, 409)
+    finally:
+        ex.control({"fail_login": False})
+        server.rt.betfair.login(force=True)
+        server.rt.betfair.invalidate()
+        server.rt.cache.clear()

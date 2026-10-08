@@ -38,6 +38,8 @@ MUST_NOT = [
     ("Nottingham Forest", "Notts County FC"), ("Valencia", "Valenciennes FC"), ("Monza", "AS Monaco FC"), ("Parma", "Paris FC"), ("Leeds", "Leicester City FC"),
     ("Burnley", "Burton Albion FC"), ("Stoke", "Stockport County FC"), ("Man Utd", "Manchester City FC"),
     ("Braga", "Sporting Clube de Portugal"), ("Sporting Lisbon", "Sporting Clube de Braga"), ("Sparta Rotterdam", "Feyenoord Rotterdam"),
+    ("Borussia Dortmund II", "Borussia Dortmund"), ("Arsenal Women", "Arsenal FC"), ("Real Madrid Castilla", "Real Madrid CF"), ("Chelsea U21", "Chelsea FC"),
+    ("Man Utd (W)", "Manchester United FC"), ("Barcelona B", "FC Barcelona"),
 ]
 
 

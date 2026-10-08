@@ -48,7 +48,12 @@ except Exception:  # Windows without the tzdata package: fall back to UTC (an ho
     UK_TZ = _tz.utc
 EVENT_TTL = 600        # seconds an event list / catalogue is reused
 BOOK_CHUNK = 25        # markets per listMarketBook call (EX_BEST_OFFERS weighs 5 each, limit 200)
-CATALOGUE_CHUNK = 60   # events per listMarketCatalogue call (6 market types each, maxResults 1000)
+CATALOGUE_MAX = 200    # listMarketCatalogue: MARKET_DESCRIPTION weighs 1 per result, request limit 200 points
+CATALOGUE_CHUNK = 30   # events per typed catalogue call (6 market types each -> 180 rows)
+CATALOGUE_CHUNK_UNTYPED = 5  # events per untyped call (tennis lists 20-40 markets per event)
+LOGIN_BACKOFF = {"ACCOUNT_NOW_LOCKED": 6 * 3600, "ACCOUNT_ALREADY_LOCKED": 6 * 3600, "TEMPORARY_BAN_TOO_MANY_REQUESTS": 20 * 60,
+                 "NETWORK": 60, "TIMEOUT_ERROR": 60, "UNEXPECTED_ERROR": 60}
+LOGIN_BACKOFF_DEFAULT = 30 * 60  # credential / account errors: do not retry every minute, Betfair locks the account
 
 LOGIN_ERRORS = {
     "INVALID_USERNAME_OR_PASSWORD": "Betfair rejected the username or password. Use your Betfair username (not e-mail). Accounts with two-factor authentication must use the certificate login.",
@@ -99,6 +104,7 @@ class FeedHealth:
     last_error: Optional[str] = None
     last_error_code: Optional[str] = None
     last_error_at: Optional[str] = None
+    login_blocked_until: Optional[str] = None  # no automatic login attempt before this (after a rejected login)
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -187,6 +193,8 @@ class BetfairPrices:
         self._cache: dict[str, tuple[float, Any]] = {}
         self._lock = threading.RLock()
         self.lay_prices: dict[str, float] = {}
+        self._login_block: Optional[BetfairError] = None
+        self._login_blocked_until = 0.0
         if login_now:
             self.ensure_session()
 
@@ -206,9 +214,23 @@ class BetfairPrices:
         self.health.last_error_code = exc.code
         self.health.last_error_at = _now()
 
-    def login(self) -> str:
-        """Open a fresh session. Raises BetfairError with a plain-English message."""
+    def _block_login(self, err: BetfairError) -> None:
+        secs = LOGIN_BACKOFF.get(err.code, LOGIN_BACKOFF_DEFAULT)
+        self._login_block = err
+        self._login_blocked_until = time.time() + secs
+        self.health.login_blocked_until = datetime.fromtimestamp(self._login_blocked_until, timezone.utc).isoformat(timespec="seconds")
+
+    def login(self, force: bool = False) -> str:
+        """Open a fresh session. Raises BetfairError with a plain-English message. After a rejected login
+        the same error is raised again without a network call until the backoff passes (repeated failed
+        logins get a Betfair account locked); `force` is for the user's own Reconnect / Test buttons."""
         with self._lock:
+            if self.token and not force:
+                return self.token
+            if not force and self._login_block is not None and time.time() < self._login_blocked_until:
+                raise self._login_block
+            self._login_block = None
+            self.health.login_blocked_until = None
             if not self.can_login:
                 exc = BetfairError("NO_SESSION", "no username/password or certificate saved, so an expired session token cannot be renewed")
                 self._record_error(exc)
@@ -228,17 +250,20 @@ class BetfairPrices:
                     payload = r.json()
                     ok, token, code = payload.get("status") == "SUCCESS", payload.get("token"), payload.get("error") or payload.get("status")
             except requests.RequestException as exc:
-                err = BetfairError("NETWORK", str(exc)[:200])
+                err = BetfairError("TIMEOUT_ERROR" if isinstance(exc, requests.Timeout) else "NETWORK", str(exc)[:200])
                 self._record_error(err)
+                self._block_login(err)
                 self.health.connected = False
                 raise err from exc
             except ValueError as exc:
                 err = BetfairError("UNEXPECTED_ERROR", "login response was not JSON")
                 self._record_error(err)
+                self._block_login(err)
                 raise err from exc
             if not ok or not token:
                 err = BetfairError(str(code or "UNEXPECTED_ERROR"))
                 self._record_error(err)
+                self._block_login(err)
                 self.health.connected = False
                 self.token = None
                 raise err
@@ -251,16 +276,21 @@ class BetfairPrices:
             return token
 
     def keep_alive(self) -> bool:
-        """Extend the session. False (and token dropped) when Betfair says the session is gone."""
+        """Extend the session. False (and token dropped) when Betfair says the session is gone. The
+        round trip happens outside the client lock so scans and slips are not held up by a slow identity server."""
         with self._lock:
-            if not self.token:
-                return False
-            try:
-                r = requests.post(self.keepalive_url, headers={"X-Application": self.app_key, "X-Authentication": self.token, "Accept": "application/json"},
-                                  timeout=self.timeout)
-                payload = r.json()
-            except (requests.RequestException, ValueError):
-                return bool(self.token)  # network blip: keep the token, the next call will tell
+            token = self.token
+        if not token:
+            return False
+        try:
+            r = requests.post(self.keepalive_url, headers={"X-Application": self.app_key, "X-Authentication": token, "Accept": "application/json"},
+                              timeout=self.timeout)
+            payload = r.json()
+        except (requests.RequestException, ValueError):
+            return bool(self.token)  # network blip: keep the token, the next call will tell
+        with self._lock:
+            if self.token != token:
+                return bool(self.token)  # someone re-logged-in meanwhile
             if payload.get("status") == "SUCCESS":
                 self.token = payload.get("token") or self.token
                 self.health.last_ok = _now()
@@ -277,6 +307,10 @@ class BetfairPrices:
         try:
             r = requests.post(endpoint or self.betting_url, json=body, timeout=self.timeout,
                               headers={"X-Application": self.app_key, "X-Authentication": token, "Content-Type": "application/json", "Accept": "application/json"})
+        except requests.Timeout as exc:
+            err = BetfairError("TIMEOUT_ERROR", str(exc)[:200])
+            self._record_error(err)
+            raise err from exc
         except requests.RequestException as exc:
             err = BetfairError("NETWORK", str(exc)[:200])
             self._record_error(err)
@@ -367,8 +401,21 @@ class BetfairPrices:
             return EventMatch(str(fixture.fixture_id)[3:], fixture.label, 1.0, 1.0, 1.0, [], "matched")
         return best_event(fixture.home, fixture.away, self.events_on(fixture.date), fixture.kickoff)
 
+    def _catalogue_call(self, chunk: list[str], market_types: Iterable[str] | None) -> tuple[dict[str, list[dict]], bool]:
+        flt: dict = {"eventIds": chunk}
+        if market_types:
+            flt["marketTypeCodes"] = list(market_types)
+        rows = self._rpc("listMarketCatalogue", {"filter": flt, "maxResults": CATALOGUE_MAX,
+                                                "marketProjection": ["RUNNER_DESCRIPTION", "MARKET_DESCRIPTION", "EVENT", "MARKET_START_TIME"]}) or []
+        grouped: dict[str, list[dict]] = {e: [] for e in chunk}
+        for c in rows:
+            grouped.setdefault((c.get("event") or {}).get("id"), []).append(c)
+        return grouped, len(rows) >= CATALOGUE_MAX
+
     def catalogue(self, event_ids: Iterable[str], market_types: Iterable[str] | None = None) -> dict[str, list[dict]]:
-        """event id -> market catalogue rows (runners + description), batched and cached per event."""
+        """event id -> market catalogue rows (runners + description), batched within Betfair's 200-point
+        request limit and cached per event. A response that hits the limit may have dropped whole
+        events, so those are re-fetched one at a time rather than cached as having no markets."""
         wanted = [e for e in dict.fromkeys(event_ids) if e]
         out: dict[str, list[dict]] = {}
         missing = []
@@ -379,20 +426,19 @@ class BetfairPrices:
                     out[e] = hit[1]
                 else:
                     missing.append(e)
-        for i in range(0, len(missing), CATALOGUE_CHUNK):
-            chunk = missing[i:i + CATALOGUE_CHUNK]
-            flt: dict = {"eventIds": chunk}
-            if market_types:
-                flt["marketTypeCodes"] = list(market_types)
-            rows = self._rpc("listMarketCatalogue", {"filter": flt, "maxResults": 1000,
-                                                    "marketProjection": ["RUNNER_DESCRIPTION", "MARKET_DESCRIPTION", "EVENT", "MARKET_START_TIME"]}) or []
-            grouped: dict[str, list[dict]] = {e: [] for e in chunk}
-            for c in rows:
-                grouped.setdefault((c.get("event") or {}).get("id"), []).append(c)
+        chunk_size = CATALOGUE_CHUNK if market_types else CATALOGUE_CHUNK_UNTYPED
+        for i in range(0, len(missing), chunk_size):
+            chunk = missing[i:i + chunk_size]
+            grouped, truncated = self._catalogue_call(chunk, market_types)
+            if truncated and len(chunk) > 1:
+                for e in chunk:  # one event at a time: no event can be silently cut off
+                    single, _ = self._catalogue_call([e], market_types)
+                    grouped[e] = single.get(e, [])
             with self._lock:
                 for e, cats in grouped.items():
-                    self._cache[f"cat:{e}"] = (time.time(), cats)
-                    out[e] = cats
+                    if e in chunk:
+                        self._cache[f"cat:{e}"] = (time.time(), cats)
+                        out[e] = cats
         return out
 
     def books(self, market_ids: Iterable[str]) -> dict[str, dict]:
@@ -615,7 +661,8 @@ class BetfairPrices:
         payload = {
             "marketId": market_id,
             "instructions": [{"selectionId": int(i["selectionId"]), "handicap": 0, "side": i["side"].upper(), "orderType": "LIMIT",
-                              "limitOrder": {"size": round(float(i["size"]), 2), "price": float(i["price"]), "persistenceType": "LAPSE"}}
+                              "limitOrder": {"size": round(float(i["size"]), 2), "price": float(i["price"]), "persistenceType": "LAPSE"},
+                              **({"customerOrderRef": str(i["customerOrderRef"])[:32]} if i.get("customerOrderRef") else {})}
                              for i in instructions],
             "customerRef": customer_ref[:32],
             "customerStrategyRef": "tradescout",

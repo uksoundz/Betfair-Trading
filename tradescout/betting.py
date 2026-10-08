@@ -25,10 +25,15 @@ BETFAIR_MARKET_URL = "https://www.betfair.com/exchange/plus/football/market/{mar
 RECONCILE_WAIT_SECONDS = 2.0  # Betfair asks for up to 15 s before a timed-out order shows; we check once after this
 
 
-def min_bet_ok(size: float, price: float, min_stake: float = MIN_STAKE) -> bool:
-    """Betfair's minimum bet rule for GBP: the stake must reach the minimum, or a smaller stake is fine
-    when the payout (stake x price) reaches the minimum payout."""
-    return size >= min_stake - 1e-9 or (size >= MIN_STAKE_SMALL - 1e-9 and size * price >= MIN_PAYOUT - 1e-9)
+SMALL_STAKE_JURISDICTIONS = ("com", "com.au")  # where the "£1 if the payout reaches £10" exception applies
+
+
+def min_bet_ok(size: float, price: float, min_stake: float = MIN_STAKE, jurisdiction: str = "com") -> bool:
+    """Betfair's minimum bet rule for GBP: the stake must reach the minimum, or (UK/international only) a
+    smaller stake is fine when the payout (stake x price) reaches the minimum payout."""
+    if size >= min_stake - 1e-9:
+        return True
+    return jurisdiction in SMALL_STAKE_JURISDICTIONS and size >= MIN_STAKE_SMALL - 1e-9 and size * price >= MIN_PAYOUT - 1e-9
 
 
 def min_plan_stake(idea: TradeIdea, min_stake: float = MIN_STAKE) -> float:
@@ -128,7 +133,7 @@ def runner_label(fixture: Fixture, leg) -> str:
     return leg.selection
 
 
-def build_slip(idea: TradeIdea, stake_money: float, bf=None, min_stake: float = MIN_STAKE) -> BetSlip:
+def build_slip(idea: TradeIdea, stake_money: float, bf=None, min_stake: float = MIN_STAKE, jurisdiction: str = "com") -> BetSlip:
     """Compose the slip for one plan. `bf` is an optional Betfair client exposing
     `resolve(fixture, market, selection)` -> (market_id, selection_id, best_back, best_lay) or None."""
     fx = idea.fixture
@@ -148,7 +153,7 @@ def build_slip(idea: TradeIdea, stake_money: float, bf=None, min_stake: float = 
             payout = size
         line = SlipLine(leg.market, MARKET_LABELS.get(leg.market, leg.market), leg.selection, runner_label(fx, leg), leg.side,
                         price, round(size, 2), round(liability, 2), round(payout, 2), leg.fraction, leg.note)
-        if not min_bet_ok(line.size, price, min_stake):
+        if not min_bet_ok(line.size, price, min_stake, jurisdiction):
             line.below_minimum = True
             line.warnings.append(f"Exchange minimum is £{min_stake:.2f} per bet (or £{MIN_STAKE_SMALL:.0f} when the payout reaches £{MIN_PAYOUT:.0f}); "
                                  f"this line is £{line.size:.2f}. Raise the stake or drop the line.")
@@ -200,7 +205,7 @@ class PlacedLine:
     side: str
     price: float
     size: float
-    status: str            # SUCCESS | FAILURE | SKIPPED
+    status: str            # SUCCESS | FAILURE | SKIPPED | PENDING | DUPLICATE | CANCELLED
     bet_id: Optional[str] = None
     size_matched: float = 0.0
     avg_price_matched: Optional[float] = None
@@ -222,29 +227,59 @@ class PlacementResult:
         return {**asdict(self), "lines": [asdict(l) for l in self.lines]}
 
 
-def _reconcile_timeout(bf, market_id: str, lines: list[SlipLine]) -> dict[int, dict]:
-    """After a TIMEOUT, ask the exchange which of our orders on this market exist (Betfair says allow up to
-    15 s). Returns selectionId -> current order for the lines that did get through."""
+RECONCILE_POLL_SECONDS = (2.0, 3.0, 5.0, 5.0)  # Betfair: allow up to 15 s for a timed-out order to appear
+
+
+def order_ref(customer_ref: str, line: SlipLine) -> str:
+    """Per-line customerOrderRef (<= 32 chars): the only safe way to recognise our own order afterwards."""
+    return f"{customer_ref[:20]}-{line.selection_id}"[:32]
+
+
+def _reconcile_unconfirmed(bf, market_id: str, lines: list[SlipLine], customer_ref: str, polls=RECONCILE_POLL_SECONDS) -> dict[int, dict]:
+    """After a timeout or a dropped connection, ask the exchange which of these lines exist, recognised by
+    their customerOrderRef (never by price and size, which an earlier order could share). Polls for up to
+    ~15 s. Returns selectionId -> order."""
     import time as _time
-    _time.sleep(RECONCILE_WAIT_SECONDS)
+    wanted = {order_ref(customer_ref, l): l for l in lines}
     found: dict[int, dict] = {}
-    try:
-        for o in bf.current_orders([market_id]):
-            for l in lines:
-                ps = o.get("priceSize") or {}
-                if o.get("selectionId") == l.selection_id and str(o.get("side", "")).lower() == l.side \
-                        and abs(float(ps.get("price") or 0) - l.plan_price) < 1e-6 and abs(float(ps.get("size") or 0) - l.size) < 0.011:
+    for wait in polls:
+        _time.sleep(wait)
+        try:
+            for o in bf.current_orders([market_id]):
+                l = wanted.get(str(o.get("customerOrderRef") or ""))
+                if l is not None:
                     found[l.selection_id] = o
-    except Exception:
-        pass
+        except Exception:
+            continue
+        if len(found) == len(lines):
+            break
     return found
+
+
+def _standing(lines: list[PlacedLine], slip_lines: dict[tuple, SlipLine]) -> float:
+    """Money actually at risk on the exchange: matched stakes (backs) or matched liabilities (lays) plus
+    the unmatched remainder of orders still waiting (EXECUTABLE)."""
+    total = 0.0
+    for p in lines:
+        if p.status != "SUCCESS":
+            continue
+        l = slip_lines.get((p.market_label, p.runner_name, p.side))
+        liability_per_stake = (l.plan_price - 1) if (l and l.side == "lay") else 1.0
+        if p.order_status == "EXECUTION_COMPLETE":
+            total += p.size * liability_per_stake
+        elif p.order_status == "CANCELLED":
+            total += (p.size_matched or 0.0) * liability_per_stake
+        else:
+            total += p.size * liability_per_stake
+    return round(total, 2)
 
 
 def place_slip(slip: BetSlip, bf, customer_ref: str, daily_cap: float, committed_today: float) -> PlacementResult:
     """Send the slip's valid lines to the exchange. The caller must already hold the user's confirmation.
-    One placeOrders call per market (Betfair places all-or-nothing within a call). If a later market is
-    rejected after an earlier one was accepted, the unmatched part of the accepted lines is cancelled so
-    the user is not left holding half a plan; anything already matched is reported as such."""
+    One placeOrders call per market (Betfair places all-or-nothing within a call). The plan is all or
+    nothing across markets too: the first rejected market stops the rest from being sent, and whatever
+    an earlier market accepted is cancelled (matched stake cannot be undone and is reported). A timeout
+    or dropped connection is 'unconfirmed', never 'failed': the exchange is asked what it holds."""
     sendable = [l for l in slip.lines if l.market_id and l.selection_id and not l.below_minimum and not l.blocked]
     skipped = [l for l in slip.lines if l not in sendable]
     if not sendable:
@@ -256,93 +291,107 @@ def place_slip(slip: BetSlip, bf, customer_ref: str, daily_cap: float, committed
                                f"£{committed:.2f}, cap is £{daily_cap:.2f}. Raise the cap in Settings or reduce the stake.")
     placed: list[PlacedLine] = [PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, "SKIPPED",
                                            error="; ".join(l.warnings) or "not sent") for l in skipped]
-    bet_ids: list[str] = []
     by_market: dict[str, list[SlipLine]] = {}
     for l in sendable:
         by_market.setdefault(l.market_id, []).append(l)
-    sent_total = 0.0
+    slip_index = {(l.market_label, l.runner_name, l.side): l for l in slip.lines}
     pending = False
-    accepted: dict[str, list[str]] = {}  # market -> bet ids accepted so far (for unwinding)
-    failed_after_success = False
-    for n, (market_id, lines) in enumerate(by_market.items()):
-        instructions = [{"selectionId": l.selection_id, "side": l.side, "price": l.plan_price, "size": l.size} for l in lines]
+    accepted: dict[str, list[str]] = {}  # market -> bet ids accepted (for unwinding)
+    failed = False
+    markets = list(by_market.items())
+    for n, (market_id, lines) in enumerate(markets):
+        if failed:
+            for l in lines:
+                placed.append(PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, "SKIPPED", error="not sent: an earlier leg of the plan was rejected"))
+            continue
         ref = f"{customer_ref}-{n}"[:32]
+        instructions = [{"selectionId": l.selection_id, "side": l.side, "price": l.plan_price, "size": l.size, "customerOrderRef": order_ref(customer_ref, l)} for l in lines]
         try:
             report = bf.place_orders(market_id, instructions, ref)
         except Exception as exc:
-            text = str(exc)
-            if "TIMEOUT" in text.upper():
-                found = _reconcile_timeout(bf, market_id, lines)
+            code = getattr(exc, "code", "")
+            if code in ("TIMEOUT_ERROR", "NETWORK") or "TIMEOUT" in str(exc).upper():
+                found = _reconcile_unconfirmed(bf, market_id, lines, customer_ref)
                 for l in lines:
                     o = found.get(l.selection_id)
                     if o:
-                        line = PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, "SUCCESS", str(o.get("betId")),
-                                          float(o.get("sizeMatched") or 0.0), o.get("averagePriceMatched"), o.get("status"), None)
-                        sent_total += l.liability
-                        bet_ids.append(str(o.get("betId")))
+                        placed.append(PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, "SUCCESS", str(o.get("betId")),
+                                                 float(o.get("sizeMatched") or 0.0), o.get("averagePriceMatched"), o.get("status"), None))
                         accepted.setdefault(market_id, []).append(str(o.get("betId")))
                     else:
                         pending = True
-                        line = PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, "PENDING",
-                                          error="Betfair timed out and the order could not be confirmed. Check Open orders before placing again.")
-                    placed.append(line)
+                        placed.append(PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, "PENDING",
+                                                 error="Betfair did not answer and the order could not be found afterwards. Check Open orders before placing again."))
                 continue
-            if accepted:
-                failed_after_success = True
+            failed = True
             for l in lines:
-                placed.append(PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, "FAILURE", error=text))
+                placed.append(PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, "FAILURE", error=str(exc)))
             continue
         reports = report.get("instructionReports", [])
         market_ok = False
+        unconfirmed = []
         for k, l in enumerate(lines):
             r = reports[k] if k < len(reports) else {}
             status = r.get("status", report.get("status", "FAILURE"))
             err = r.get("errorCode") or report.get("errorCode")
             if status == "TIMEOUT" or err == "TIMEOUT_ERROR":
-                found = _reconcile_timeout(bf, market_id, [l])
-                o = found.get(l.selection_id)
-                if o:
-                    status, err = "SUCCESS", None
-                    r = {"betId": o.get("betId"), "sizeMatched": o.get("sizeMatched"), "averagePriceMatched": o.get("averagePriceMatched"), "orderStatus": o.get("status")}
-                else:
-                    status, err, pending = "PENDING", "Betfair timed out and the order could not be confirmed. Check Open orders before placing again.", True
-            elif err == "DUPLICATE_TRANSACTION":
+                unconfirmed.append((k, l))
+                continue
+            if err == "DUPLICATE_TRANSACTION":
                 status, err = "DUPLICATE", "This slip was already sent a moment ago; the exchange refused the duplicate. Check Open orders."
             line = PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, status, r.get("betId"),
                               float(r.get("sizeMatched") or 0.0), r.get("averagePriceMatched"), r.get("orderStatus"), err)
             placed.append(line)
             if status == "SUCCESS":
                 market_ok = True
-                sent_total += l.liability
                 if line.bet_id:
-                    bet_ids.append(str(line.bet_id))
                     accepted.setdefault(market_id, []).append(str(line.bet_id))
-        if not market_ok and accepted and market_id not in accepted:
-            failed_after_success = True
+        if unconfirmed:
+            found = _reconcile_unconfirmed(bf, market_id, [l for _, l in unconfirmed], customer_ref)
+            for _, l in unconfirmed:
+                o = found.get(l.selection_id)
+                if o:
+                    market_ok = True
+                    placed.append(PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, "SUCCESS", str(o.get("betId")),
+                                             float(o.get("sizeMatched") or 0.0), o.get("averagePriceMatched"), o.get("status"), None))
+                    accepted.setdefault(market_id, []).append(str(o.get("betId")))
+                else:
+                    pending = True
+                    placed.append(PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, "PENDING",
+                                             error="Betfair timed out and the order could not be found afterwards. Check Open orders before placing again."))
+        if not market_ok and not any(p.status == "PENDING" for p in placed if p.market_label == lines[0].market_label):
+            failed = True
     unwound = False
-    if failed_after_success and accepted:
+    if failed and accepted:
         # cancel whatever is still unmatched on the markets that went through; matched stake cannot be undone
         for market_id, ids in accepted.items():
             try:
-                bf.cancel_orders(market_id, ids)
+                rep = bf.cancel_orders(market_id, ids)
                 unwound = True
+                cancelled = {str(i.get("instruction", {}).get("betId")): float(i.get("sizeCancelled") or 0.0) for i in rep.get("instructionReports", [])}
             except Exception:
-                pass
-        for p in placed:
-            if p.status == "SUCCESS" and p.order_status != "EXECUTION_COMPLETE":
-                p.error = "cancelled: another leg of the plan was rejected"
-    ok = any(p.status == "SUCCESS" for p in placed)
-    n_ok = sum(1 for p in placed if p.status == "SUCCESS")
+                cancelled = {}
+            for p in placed:
+                if p.status == "SUCCESS" and str(p.bet_id) in ids and p.order_status != "EXECUTION_COMPLETE":
+                    p.order_status = "CANCELLED"
+                    p.size_matched = round(max(0.0, p.size - cancelled.get(str(p.bet_id), p.size)), 2) if cancelled else p.size_matched
+                    p.error = "cancelled: another leg of the plan was rejected" + (f"; £{p.size_matched:.2f} had already matched" if p.size_matched else "")
+    sent_total = _standing(placed, slip_index)
+    bet_ids = [str(p.bet_id) for p in placed if p.status == "SUCCESS" and p.bet_id and not (p.order_status == "CANCELLED" and not p.size_matched)]
+    live = [p for p in placed if p.status == "SUCCESS" and not (p.order_status == "CANCELLED" and not p.size_matched)]
+    ok = bool(live)
+    n_ok = len(live)
     if unwound:
-        matched = sum(p.size_matched for p in placed if p.status == "SUCCESS")
-        msg = (f"Plan not completed: a later leg was rejected, so the unmatched part of the accepted lines was cancelled."
-               + (f" £{matched:.2f} had already matched and stands." if matched else ""))
+        matched = sum(p.size_matched for p in placed if p.status == "SUCCESS" and p.order_status == "CANCELLED")
+        msg = ("Plan not completed: a leg was rejected, so the unmatched part of the accepted lines was cancelled."
+               + (f" £{matched:.2f} had already matched and stands." if matched else " Nothing is on the exchange."))
     elif ok:
         msg = f"{n_ok} of {len(sendable)} lines placed, £{sent_total:.2f} committed."
         if pending:
-            msg += " One or more lines timed out: check Open orders."
+            msg += " One or more lines could not be confirmed: check Open orders."
     elif pending:
-        msg = "Betfair timed out; nothing could be confirmed. Check Open orders in My picks before trying again."
+        msg = "Betfair did not confirm the order and it could not be found afterwards. Check Open orders in My picks before trying again."
     else:
-        msg = "No lines were accepted by the exchange: " + "; ".join(sorted({p.error for p in placed if p.error and p.status != 'SKIPPED'})) if any(p.error for p in placed if p.status != "SKIPPED") else "No lines were accepted by the exchange."
-    return PlacementResult(ok, placed, round(sent_total, 2), bet_ids, msg, unwound, pending)
+        errs = sorted({p.error for p in placed if p.error and p.status not in ("SKIPPED",)})
+        msg = "No lines were accepted by the exchange" + (": " + "; ".join(errs) if errs else ".")
+    return PlacementResult(ok, placed, sent_total, bet_ids, msg, unwound, pending)

@@ -188,3 +188,104 @@ def test_inplay_flag_before_the_start_time_is_not_believed(client, day_fixtures)
     mp = client._build_prices(fx, cats, books, m)
     assert mp.status == "ok" and not mp.inplay and mp.available and any("ignored" in f for f in mp.flags)
     assert mp.raw_markets and mp.raw_markets[0]["inplay"] is True and mp.raw_markets[0]["start"] == future
+
+
+def _trade_slip(client, day_fixtures, strategy="over25_ins"):
+    from tradescout.betting import build_slip
+    prov = OpenFootballProvider()
+    scan = Scout(prov, prov, client).scan(DAY)
+    idea = next(i for i in scan.ideas if i.strategy == strategy and i.orders and all(scan.price_status[i.fixture.label]["status"] == "ok" for _ in [0]))
+    return idea, build_slip(idea, 20.0, client)
+
+
+def test_first_market_rejected_stops_the_plan(client, day_fixtures, fake):
+    import tradescout.betting as betting
+    from tradescout.betting import place_slip
+    url, ex = fake
+    idea, slip = _trade_slip(client, day_fixtures)
+    assert len({l.market_id for l in slip.lines}) == 2
+    ex.control({"reset_orders": True, "reject_market_types": ["OVER_UNDER_25"]})
+    try:
+        res = place_slip(slip, client, "ts-first-fails", 500.0, 0.0)
+    finally:
+        ex.control({"reject_market_types": []})
+    assert not res.ok and [l.status for l in res.lines] == ["FAILURE", "SKIPPED"] and "earlier leg" in res.lines[1].error and not ex.orders
+
+
+def test_later_market_rejected_unwinds_and_counts_only_what_stands(client, day_fixtures, fake):
+    from tradescout.betting import place_slip
+    url, ex = fake
+    idea, slip = _trade_slip(client, day_fixtures)
+    # make the main leg rest unmatched so the unwind cancels it entirely
+    for l in slip.lines:
+        if l.market == "OVER_UNDER_25":
+            l.plan_price = 1000.0
+    ex.control({"reset_orders": True, "reject_market_types": ["CORRECT_SCORE"]})
+    try:
+        res = place_slip(slip, client, "ts-second-fails", 500.0, 0.0)
+    finally:
+        ex.control({"reject_market_types": []})
+    assert res.unwound and not res.ok and res.committed == 0.0 and res.bet_ids == []
+    main = next(l for l in res.lines if l.market_label.startswith("Over/Under"))
+    assert main.status == "SUCCESS" and main.order_status == "CANCELLED" and "cancelled" in main.error
+    assert all(o["sizeRemaining"] == 0.0 for o in ex.orders)
+
+
+def test_timeout_is_reconciled_by_order_reference_not_by_price(client, day_fixtures, fake, monkeypatch):
+    import tradescout.betting as betting
+    from tradescout.betting import place_slip
+    url, ex = fake
+    monkeypatch.setattr(betting, "RECONCILE_POLL_SECONDS", (0.05, 0.05))
+    idea, slip = _trade_slip(client, day_fixtures)
+    ex.control({"reset_orders": True})
+    first = place_slip(slip, client, "ts-earlier", 500.0, 0.0)  # an earlier identical order on the exchange
+    assert first.ok
+    ex.control({"timeout_market_types": ["OVER_UNDER_25", "CORRECT_SCORE"]})
+    try:
+        res = place_slip(slip, client, "ts-later", 500.0, 0.0)
+    finally:
+        ex.control({"timeout_market_types": []})
+    assert res.ok and not res.pending and len(res.bet_ids) == 2
+    assert set(res.bet_ids).isdisjoint(set(first.bet_ids)), "must adopt its own orders, not the earlier identical ones"
+    refs = {o["customerOrderRef"] for o in ex.orders if o["betId"] in res.bet_ids}
+    assert all(r.startswith("ts-later") for r in refs)
+
+
+def test_duplicate_submission_is_refused_by_the_exchange(client, day_fixtures, fake):
+    from tradescout.betting import place_slip
+    url, ex = fake
+    idea, slip = _trade_slip(client, day_fixtures)
+    ex.control({"reset_orders": True})
+    a = place_slip(slip, client, "ts-dup", 500.0, 0.0)
+    b = place_slip(slip, client, "ts-dup", 500.0, 0.0)
+    assert a.ok and not b.ok and b.lines[0].status == "DUPLICATE" and b.lines[1].status == "SKIPPED" and len(ex.orders) == 2
+
+
+def test_catalogue_requests_respect_the_weight_limit_and_truncation(client, day_fixtures, fake):
+    url, ex = fake
+    client.invalidate()
+    ex.catalogue_requests.clear()
+    per, rep = client.prices_for_day(day_fixtures)
+    assert rep.error is None and rep.priced == len(day_fixtures)
+    assert ex.catalogue_requests and all(r["weight"] * r["maxResults"] <= 200 for r in ex.catalogue_requests)
+    # untyped (tennis-style) calls use small chunks and re-fetch per event when the response hits the cap
+    from tradescout.data.betfair_tennis import BetfairTennis
+    from tradescout.tennis.data import TennisProvider
+    bt = BetfairTennis(client, TennisProvider())
+    fx = bt.fixtures(DAY)
+    client.invalidate()
+    ex.catalogue_requests.clear()
+    per, rep = bt.prices_for_day(fx)
+    assert rep.priced == len(fx) and all(r["weight"] * r["maxResults"] <= 200 and r["events"] <= 5 for r in ex.catalogue_requests)
+
+
+def test_rejected_login_backs_off_instead_of_retrying_every_call(fake, day_fixtures):
+    bad = BetfairPrices("testkey", None, "user", "wrong")
+    url, ex = fake
+    before = ex.calls["login"]
+    for _ in range(3):
+        bad.prices_for_day(day_fixtures[:1])
+    assert ex.calls["login"] == before + 1 and bad.health.login_blocked_until
+    with pytest.raises(BetfairError):
+        bad.login(force=True)  # the user's own Reconnect does try again
+    assert ex.calls["login"] == before + 2

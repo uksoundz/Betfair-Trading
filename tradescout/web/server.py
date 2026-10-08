@@ -459,8 +459,9 @@ def betfair_reconnect():
         return {"ok": False, "error": "Betfair is not set up.", "betfair": rt.betfair_state()}
     bf = rt.betfair
     try:
-        bf.token = None
-        bf.login()
+        if bf.can_login:
+            bf.token = None
+            bf.login(force=True)
         probe = bf.probe()
         bf.app_key_delayed()
         bf.invalidate()
@@ -642,10 +643,12 @@ def _rebuild_idea(body) -> tuple:
     floor = min_plan_stake(idea)
     if body.stake_money:
         stake = body.stake_money
-    else:
+    elif getattr(body, "for_slip", True):
         # the risk engine's stake, raised to the smallest plan stake at which every leg clears the
         # exchange minimum (a £2 plan split 80/20 cannot be placed); the slip says when this happened
         stake = max(idea.stake_money or 0.0, floor)
+    else:
+        stake = idea.stake_money or 2.0  # tracking for the record keeps the advised unit
     return idea, stake, sport
 
 
@@ -654,37 +657,50 @@ def _price_client(sport: str):
     return scout.prices if (rt.betfair_configured and hasattr(scout.prices, "resolve")) else None
 
 
-def _placement_gate(idea, slip) -> dict:
-    """Why the Place button is on or off, spelled out. Placement is always user-confirmed per slip."""
+def _placement_gate(idea, slip, stake: float = 0.0) -> dict:
+    """Why the Place button is on or off, spelled out. Placement is always user-confirmed per slip.
+    Hard blocks cannot be overridden (mode, connection, nothing sendable, no exchange price, the risk
+    engine saying no). Soft blocks (not a TRADE, above the per-trade cap, already placed today) need the
+    explicit override tick-box and are logged as the user's call."""
     sendable = [l for l in slip.lines if l.market_id and l.selection_id and not l.below_minimum and not l.blocked]
-    reasons = []
+    hard, soft = [], []
     if settings.betting_mode != "live":
-        reasons.append("Betting mode is " + ("Paper" if settings.betting_mode == "paper" else "Off") + ": switch it to Live in Settings > Betting to send orders.")
+        hard.append("Betting mode is " + ("Paper" if settings.betting_mode == "paper" else "Off") + ": switch it to Live in Settings > Betting to send orders.")
     if not rt.betfair_configured:
-        reasons.append("Betfair is not set up: add the application key, username and password in Settings.")
+        hard.append("Betfair is not set up: add the application key, username and password in Settings.")
     elif not rt.betfair_ok:
-        reasons.append("Betfair is not connected: " + (rt.betfair_error or "no session yet") + ". Use Reconnect in Settings.")
+        hard.append("Betfair is not connected: " + (rt.betfair_error or "no session yet") + ". Use Reconnect in Settings.")
     if not slip.lines:
-        reasons.append("This plan has no pre-match selections to place.")
+        hard.append("This plan has no pre-match selections to place.")
     elif not sendable:
         if any(l.blocked for l in slip.lines):
-            reasons.append("The market is " + ", ".join(sorted({(l.market_status or "").lower().replace("inplay", "in play") for l in slip.lines if l.blocked})) + ": pre-match orders cannot be placed now.")
+            hard.append("The market is " + ", ".join(sorted({(l.market_status or "").lower().replace("inplay", "in play") for l in slip.lines if l.blocked})) + ": pre-match orders cannot be placed now.")
         else:
-            reasons.append("None of the lines could be found on the exchange (or they are below the minimum stake), so there is nothing to send.")
-    hard_block = bool(reasons)
-    override_needed = idea.decision != "TRADE"
-    if override_needed:
-        reasons.append(f"The app's decision is {idea.decision}, not TRADE: " + " ".join(idea.decision_reasons[:2]) +
-                       " You can still place it by ticking the override, which is logged as your call, not the app's.")
-    return {"can_place": not hard_block and not override_needed, "override_allowed": not hard_block and override_needed,
-            "override_needed": override_needed, "place_block_reasons": reasons, "sendable_lines": len(sendable),
-            "betting_mode": settings.betting_mode, "betfair_connected": rt.betfair_ok, "delayed": rt.betfair_state().get("delayed")}
+            hard.append("None of the lines could be found on the exchange (or they are below the minimum stake), so there is nothing to send.")
+    if idea.decision == "RESEARCH":
+        hard.append("No exchange price was available when this idea was scored, so it cannot be placed from here. Refresh prices first.")
+    if idea.decision == "TRADE" and (idea.stake_money or 0) <= 0:
+        hard.append("The risk engine says no stake for this trade: " + (idea.risk_notes[0] if idea.risk_notes else "a loss limit or exposure cap is reached") + ".")
+    cap = round(rt.limits.max_per_trade * settings.bank, 2)
+    risk = round(sum(l.liability for l in sendable), 2)
+    if sendable and risk > cap + 1e-9:
+        soft.append(f"This slip risks £{risk:.2f}, above your per-trade cap of £{cap:.2f} ({rt.limits.max_per_trade:.0%} of bank). Tick the override to place it anyway, or lower the stake.")
+    already = journal.live_entry(idea.fixture, idea.strategy)
+    if already is not None:
+        soft.append(f"Already placed on Betfair today (bet ids {', '.join(already.bet_refs[:3]) or 'see Open orders'}). Cancel it under My picks > Open orders first, or tick the override to place it again.")
+    if idea.decision == "NO TRADE":
+        soft.append(f"The app's decision is NO TRADE, not TRADE: " + " ".join(idea.decision_reasons[:2]) +
+                    " You can still place it by ticking the override, which is logged as your call, not the app's.")
+    hard_block = bool(hard)
+    return {"can_place": not hard_block and not soft, "override_allowed": not hard_block and bool(soft), "override_needed": bool(soft),
+            "place_block_reasons": hard + soft, "sendable_lines": len(sendable), "betting_mode": settings.betting_mode, "betfair_connected": rt.betfair_ok,
+            "delayed": rt.betfair_state().get("delayed"), "per_trade_cap": cap, "risk_money": risk, "already_placed": already is not None}
 
 
 @app.post("/api/betslip/preview")
 def betslip_preview(body: SlipIn):
     idea, stake, sport = _rebuild_idea(body)
-    slip = build_slip(idea, stake, _price_client(sport))
+    slip = build_slip(idea, stake, _price_client(sport), jurisdiction=settings.betfair_jurisdiction)
     floor = min_plan_stake(idea)
     advised = round(idea.stake_money or 0.0, 2)
     note = None
@@ -694,7 +710,7 @@ def betslip_preview(body: SlipIn):
     elif not body.stake_money and not advised and idea.decision != "TRADE":
         note = f"No stake is advised for a {idea.decision} idea. £{stake:.2f} is the smallest plan stake at which every leg clears the exchange minimum."
     return slip.to_dict() | {"decision": idea.decision, "decision_reasons": idea.decision_reasons, "stake_advised": advised, "stake_floor": floor,
-                             "stake_note": note, **_placement_gate(idea, slip)}
+                             "stake_note": note, **_placement_gate(idea, slip, stake)}
 
 
 @app.post("/api/betslip/place")
@@ -712,18 +728,19 @@ def betslip_place(body: PlaceIn):
             client.bf.ensure_session() if hasattr(client, "bf") else client.ensure_session()
         except Exception as exc:
             raise HTTPException(400, f"Betfair is not connected: {exc}")
-    slip = build_slip(idea, stake, client)
-    gate = _placement_gate(idea, slip)
+    slip = build_slip(idea, stake, client, jurisdiction=settings.betfair_jurisdiction)
+    gate = _placement_gate(idea, slip, stake)
     if not gate["can_place"] and not (gate["override_allowed"] and body.override):
         raise HTTPException(409, " ".join(gate["place_block_reasons"]))
-    override = idea.decision != "TRADE"
+    override = gate["override_needed"]
     ref = customer_ref(body.date, body.match_id, body.strategy, sport, round(stake, 2))
     result = place_slip(slip, client, ref, settings.daily_cap, journal.committed_today("live"))
     if result.ok or result.pending:
-        note = "placed on Betfair" + (f" (override: app decision {idea.decision})" if override else "") + (" (timed out, check open orders)" if result.pending else "")
+        why = [r.split(":")[0] for r in gate["place_block_reasons"]] if override else []
+        note = "placed on Betfair" + (f" (override: {'; '.join(why)})" if override else "") + (" (unconfirmed line, check open orders)" if result.pending else "")
         e = journal.add(idea, stake, note=note)
         e.sport = sport
-        journal.attach_slip(e.id, [asdict(l) for l in slip.lines], placed="live", refs=result.bet_ids, total=result.committed)
+        journal.attach_slip(e.id, [asdict(l) for l in slip.lines], placed="live", refs=result.bet_ids, total=result.committed, note=note, stake_money=stake)
         rt.cache.pop(f"{sport}:{body.date}", None)
     return {"ok": result.ok, "result": result.to_dict(), "slip": slip.to_dict(), "summary": journal.summary(), "override": override,
             "committed_today": journal.committed_today("live"), "daily_cap": settings.daily_cap}
@@ -765,10 +782,10 @@ def bets_cancel(body: CancelIn):
 @app.post("/api/betslip/paper")
 def betslip_paper(body: SlipIn):
     idea, stake, sport = _rebuild_idea(body)
-    slip = build_slip(idea, stake, _price_client(sport))
+    slip = build_slip(idea, stake, _price_client(sport), jurisdiction=settings.betfair_jurisdiction)
     e = journal.add(idea, stake, note="paper slip")
     e.sport = sport
-    journal.attach_slip(e.id, [asdict(l) for l in slip.lines])
+    journal.attach_slip(e.id, [asdict(l) for l in slip.lines], note="paper slip", stake_money=stake)
     rt.cache.pop(f"{sport}:{body.date}", None)
     return {"ok": True, "entry": asdict(e), "slip": slip.to_dict(), "summary": journal.summary()}
 
@@ -781,6 +798,7 @@ class TrackIn(BaseModel):
     sport: str = "football"
     stake_money: Optional[float] = None
     note: str = ""
+    for_slip: bool = False
 
 
 @app.get("/api/journal")

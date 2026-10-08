@@ -13,7 +13,7 @@ const hhmm = (iso) => iso ? iso.replace('T', ' ').slice(11, 19) : '';
 const PRICE_LABEL = { ok: 'priced', none: '', no_event: 'no Betfair match', no_markets: 'no markets yet', inplay: 'in play', suspended: 'suspended', closed: 'closed', error: 'feed error' };
 
 let sport = 'football', data = null, dataOther = null, strategies = [], selected = null, status = {}, calendar = {}, autoJumped = false, warnedBetfair = false;
-let refreshTimer = null, countdownTimer = null, nextRefreshAt = null, feedOpen = false;
+let refreshTimer = null, countdownTimer = null, nextRefreshAt = null, feedOpen = false, lastDiag = '';
 
 function toast(msg, ms = 4000) { const t = $('#toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', ms); }
 function isoShift(iso, days) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + days); return d.toISOString().slice(0, 10); }
@@ -141,17 +141,18 @@ async function silentRefresh() {
   try {
     const fresh = await api(`/api/scan?date=${d}&sport=${mySport}&refresh=prices`);
     if (seq !== scanSeq || !fresh.matches.length) return;
-    data = fresh; dataOther = null;
+    data = fresh;
     await loadStatus();
-    renderList(); renderPicks(); renderStrategy(); renderFeed();
-    if (selected) { const y = window.scrollY; showMatch(selected, data, true); window.scrollTo(0, y); }
+    if ($('#picksBoth').checked) { await loadOther(); } else { renderPicks(); }
+    renderList(); renderStrategy(); renderFeed();
+    if (selected) { const y = window.scrollY; showMatch(selected, data, true, true); window.scrollTo(0, y); }
   } catch (e) { toast('Price refresh failed: ' + e.message, 5000); }
   finally { if (seq === scanSeq) scheduleRefresh(); }
 }
 async function scan(refresh = '') {
   const d = $('#date').value; if (!d) return;
   const seq = ++scanSeq, mySport = sport;  // a newer scan (date or sport change) makes this one stale
-  clearTimeout(refreshTimer); clearInterval(countdownTimer);
+  clearTimeout(refreshTimer); clearInterval(countdownTimer); nextRefreshAt = null;
   const start = await stripStart();
   if (start !== status.today && !calendar[d] && !calendar[isoShift(d, 1)]) { await loadCalendar(start); } else { renderDayStrip(start); }
   $('#banner').innerHTML = ''; $('#feedPanel').innerHTML = ''; $('#matchList').innerHTML = '<div class="spinner">Scanning ' + d + (status.betfair_configured ? ' and pulling exchange prices' : '') + '…</div>'; $('#detail').innerHTML = ''; $('#picks').innerHTML = '<div class="spinner">Scanning…</div>';
@@ -211,7 +212,7 @@ function renderFeed() {
     if (data.skipped && data.skipped.length) rows.push(`<p><b>Feed errors</b>:</p><ul>${data.skipped.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`);
     const h = bf.health || {};
     rows.push(`<p class="meta">Session: ${bf.connected ? 'connected' : 'not connected'} · logins ${h.logins || 0} · API calls ${h.calls || 0} · last OK ${h.last_ok ? hhmm(h.last_ok) + ' UTC' : 'never'}${h.last_error ? ' · last error ' + esc(h.last_error) : ''} · login host ${esc(h.identity_host || '')} · jurisdiction ${esc(bf.jurisdiction || 'com')}</p>`);
-    rows.push(`<div class="row"><button class="small" id="feedDiag">Run full diagnosis</button><button class="small" id="feedReconnect">Reconnect to Betfair</button><button class="small" id="feedRefresh">Refresh prices now</button></div><div id="feedDiagOut"></div>`);
+    rows.push(`<div class="row"><button class="small" id="feedDiag">Run full diagnosis</button><button class="small" id="feedReconnect">Reconnect to Betfair</button><button class="small" id="feedRefresh">Refresh prices now</button></div><div id="feedDiagOut">${lastDiag}</div>`);
     body = rows.join('');
   }
   el.innerHTML = `<div class="banner feed ${cls}">${head}${toggle}${body}</div>`;
@@ -221,16 +222,17 @@ function renderFeed() {
   if ($('#feedRefresh')) $('#feedRefresh').onclick = () => silentRefresh();
 }
 async function runDiagnosis() {
-  const out = $('#feedDiagOut'); out.innerHTML = '<div class="spinner">Asking the exchange…</div>';
+  $('#feedDiagOut').innerHTML = '<div class="spinner">Asking the exchange…</div>';
+  const put = (html) => { lastDiag = html; const el = $('#feedDiagOut'); if (el) el.innerHTML = html; };
   try {
     const r = await api(`/api/betfair/diagnose?date=${data.date}&sport=${sport}`);
-    if (!r.configured) { out.innerHTML = `<div class="warn">! ${esc(r.error)}</div>`; return; }
+    if (!r.configured) { put(`<div class="warn">! ${esc(r.error)}</div>`); return; }
     const rep = r.report || {}; const h = r.health || {};
-    out.innerHTML = `<div class="meta" style="margin-top:8px">Login ${h.connected ? 'OK' : 'FAILED'}${h.last_error ? ': ' + esc(h.last_error) : ''} · key ${h.delayed ? 'DELAYED' : h.delayed === false ? 'live' : 'unknown'} · ${rep.events_on_day || 0} exchange events on ${r.day} · matched ${rep.matched || 0} of ${rep.fixtures || 0}, priced ${rep.priced || 0}${rep.error ? ' · feed error: ' + esc(rep.error) : ''}</div>
+    put(`<div class="meta" style="margin-top:8px">Login ${h.connected ? 'OK' : 'FAILED'}${h.last_error ? ': ' + esc(h.last_error) : ''} · key ${h.delayed ? 'DELAYED' : h.delayed === false ? 'live' : 'unknown'} · ${rep.events_on_day || 0} exchange events on ${r.day} · matched ${rep.matched || 0} of ${rep.fixtures || 0}, priced ${rep.priced || 0}${rep.error ? ' · feed error: ' + esc(rep.error) : ''}</div>
       <div class="wrap"><table class="sc"><tr><th>Fixture</th><th>Status</th><th>Exchange event</th><th>Prices</th><th>Note</th></tr>
       ${(r.fixtures || []).map(x => `<tr><td>${esc(x.fixture)}</td><td class="${x.status === 'ok' ? 'pos' : 'neg'}">${esc(x.status)}</td><td>${esc(x.event_name || '-')}</td><td class="n">${x.quotes || 0}</td><td class="meta">${esc(x.note || '')}${x.candidates && x.candidates.length ? ' Nearest: ' + x.candidates.slice(0, 2).map(c => esc(c[0])).join(' / ') : ''}${(x.raw_markets || []).map(m => `<div>${esc(m.type)}: ${esc(m.status)}${m.inplay ? ' · in play' : ''} · start ${esc((m.start || '').replace('T', ' ').slice(0, 16))} · £${Math.round(m.matched || 0)} matched · ${m.runners_priced || 0}/${m.runners || 0} runners priced</div>`).join('')}${(x.flags || []).map(f => `<div class="warn">! ${esc(f)}</div>`).join('')}</td></tr>`).join('')}</table></div>
-      ${rep.event_names && rep.event_names.length ? `<details style="margin-top:6px"><summary class="meta">Every event the exchange lists that day (${rep.event_names.length})</summary><div class="meta">${rep.event_names.map(esc).join(' · ')}</div></details>` : ''}`;
-  } catch (e) { out.innerHTML = `<div class="warn">! ${esc(e.message)}</div>`; }
+      ${rep.event_names && rep.event_names.length ? `<details style="margin-top:6px"><summary class="meta">Every event the exchange lists that day (${rep.event_names.length})</summary><div class="meta">${rep.event_names.map(esc).join(' · ')}</div></details>` : ''}`);
+  } catch (e) { put(`<div class="warn">! ${esc(e.message)}</div>`); }
 }
 async function reconnectBetfair() {
   const el = $('#bfResult'); if (el) el.textContent = 'Reconnecting…';
@@ -314,10 +316,10 @@ function priceBanner(m) {
   return `<div class="warn" style="margin:6px 0">! ${esc(m.price_note || 'No exchange prices for this match.')}${cands ? ' Nearest exchange events: ' + cands + '.' : ''}${st === 'no_event' ? ' Open the price feed details (top right pill) to run a full diagnosis.' : ''}</div>`;
 }
 
-function showMatch(id, fromData, keepScroll) {
+function showMatch(id, fromData, keepScroll, keepView) {
   const src = fromData || data; const m = src.matches.find(x => x.id === id); if (!m) return;
   if (src === data) { selected = id; renderList(); }
-  showView('matches');
+  if (!keepView) showView('matches');
   const f = m.forecast;
   const result = m.result ? `<div class="result">Actual result: <b>${m.sport === 'tennis' ? esc(m.result.winner) + ' won ' + esc(m.result.score) + (m.result.retired ? ' (retirement)' : '') : esc(m.home) + ' ' + m.result.home + '-' + m.result.away + ' ' + esc(m.away)}</b></div>` : '';
   $('#detail').innerHTML = `
@@ -416,7 +418,7 @@ async function openSlip(m, strategy, stake, src) {
     const gate = s.can_place ? `<div class="meta" style="margin-top:8px">The app calls this a <b>TRADE</b>. Pressing Place shows a final confirmation before anything is sent.</div>`
       : `<div class="banner ${s.override_allowed ? '' : 'err'}" style="margin-top:10px"><b>${s.override_allowed ? 'Placing needs your override.' : 'Why the Place button is off:'}</b>
           <ul style="margin:6px 0 0 18px">${(s.place_block_reasons || []).map(r => `<li>${esc(r)}</li>`).join('')}</ul>
-          ${s.override_allowed ? `<label style="display:block;margin-top:8px"><input type="checkbox" id="slipOverride"> <b>Place anyway.</b> I understand the app's decision is <b>${esc(s.decision)}</b>, this is my own call, and it will be logged as an override.</label>` : ''}
+          ${s.override_allowed ? `<label style="display:block;margin-top:8px"><input type="checkbox" id="slipOverride"> <b>Place anyway.</b> I understand the points above${s.decision !== 'TRADE' ? ` (the app's decision is <b>${esc(s.decision)}</b>)` : ''}, this is my own call, and it will be logged as an override.</label>` : ''}
           ${(s.place_block_reasons || []).some(r => /Settings/.test(r)) ? '<div class="row" style="margin-top:8px"><a href="#" id="slipSettings" class="btnlink">Open Settings ›</a></div>' : ''}</div>`;
     card.innerHTML = `<h2>${decBadge(s.decision)} Bet slip: ${esc(s.strategy_label)}</h2><div class="meta">${esc(s.fixture)} · ${s.date} · prices from ${s.price_source}${s.delayed ? ' (delayed key, up to 3 min old)' : ''}</div>
       ${s.decision !== 'TRADE' ? `<div class="banner" style="margin-top:8px"><b>${esc(s.decision)}.</b> ${esc((s.decision_reasons || []).join(' '))}</div>` : ''}
@@ -436,6 +438,7 @@ async function openSlip(m, strategy, stake, src) {
       <div id="slipConfirm"></div>`;
     $('#slipClose').onclick = () => modal.hidden = true;
     $('#slipRecalc').onclick = () => openSlip(m, strategy, +$('#slipStake').value, src);
+    $('#slipStake').oninput = () => { if (+$('#slipStake').value !== s.stake_money) { $('#slipPlace').disabled = true; $('#slipPlace').title = 'Press Recalculate to rebuild the slip at this stake'; } };
     if ($('#slipSettings')) $('#slipSettings').onclick = (ev) => { ev.preventDefault(); modal.hidden = true; showView('settings'); };
     if (urls.length) $('#slipOpenAll').onclick = () => { urls.forEach((u, k) => setTimeout(() => window.open(u, '_blank', 'noopener'), k * 150)); };
     if ($('#slipOverride')) $('#slipOverride').onchange = () => { $('#slipPlace').disabled = !$('#slipOverride').checked; };
@@ -445,7 +448,7 @@ async function openSlip(m, strategy, stake, src) {
     };
     $('#slipPaper').onclick = async () => {
       $('#slipPaper').disabled = true;
-      try { await post('/api/betslip/paper', { ...body, stake_money: +$('#slipStake').value });
+      try { await post('/api/betslip/paper', { ...body, stake_money: s.stake_money });
         const idea = m.ideas.find(x => x.strategy === strategy); if (idea) idea.tracked = true; await loadStatus(); modal.hidden = true; toast('Recorded as a paper bet in My picks.'); showMatch(m.id, src); }
       catch (e) { $('#slipPaper').disabled = false; toast('Could not record: ' + e.message, 6000); }
     };
@@ -461,7 +464,7 @@ async function openSlip(m, strategy, stake, src) {
       $('#slipGo').onclick = async () => {
         $('#slipGo').disabled = true; $('#slipGo').textContent = 'Sending to Betfair…';
         try {
-          const r = await post('/api/betslip/place', { ...body, stake_money: +$('#slipStake').value, confirm: true, override });
+          const r = await post('/api/betslip/place', { ...body, stake_money: s.stake_money, confirm: true, override });
           const res = r.result;
           $('#slipConfirm').innerHTML = `<div class="banner ${res.ok ? '' : 'err'}" style="margin-top:10px"><b>${esc(res.message)}</b>
             <table class="sc" style="margin-top:6px"><tr><th>Line</th><th class="n">Price</th><th class="n">Size</th><th>Status</th><th class="n">Matched</th><th>Bet id</th></tr>

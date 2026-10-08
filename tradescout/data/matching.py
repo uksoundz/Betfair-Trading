@@ -30,12 +30,15 @@ from .names import canonical
 
 NOISE = {"fc", "afc", "cf", "sc", "ac", "as", "ss", "us", "ssc", "rc", "rcd", "ud", "cd", "sd", "ca", "club", "de", "do", "da", "la", "le", "les", "el",
          "and", "calcio", "balompie", "futbol", "hsc", "osc", "sco", "cfc", "bc", "acf", "sv", "tsg", "vfb", "vfl", "fsv", "bsc", "fk", "nk", "sk", "ks",
-         "bk", "ik", "aj", "es", "ogc", "the", "of", "1", "04", "05", "07", "29", "65", "1846", "1848", "1899", "1901", "1907", "1909", "1910", "1913", "i", "ii",
+         "bk", "ik", "aj", "es", "ogc", "the", "of", "1", "04", "05", "07", "29", "65", "1846", "1848", "1899", "1901", "1907", "1909", "1910", "1913",
          "football", "soccer", "team", "clube", "sad", "futebol", "gd", "cf", "e", "cp", "rotterdam", "almelo", "nijmegen", "sittard", "zwolle", "praia"}
 LOW_WEIGHT = {"united", "city", "town", "rovers", "wanderers", "county", "albion", "athletic", "atletico", "hotspur", "north", "end", "real", "borussia",
               "racing", "sporting", "olympique", "stade", "deportivo", "dynamo", "dinamo", "spartak", "lokomotiv", "eintracht", "hellas", "alsace",
               "milano", "madrid", "barcelona", "vigo", "bremen", "frankfurt", "san", "sport", "association", "club", "fc"}
 LOW = 0.3
+# a side carrying one of these is a different team (reserves, youth, women): never the first team's fixture
+QUALIFIERS = {"ii", "iii", "b", "c", "women", "w", "ladies", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserves", "reserve", "res", "academy",
+              "femenino", "feminino", "frauen", "amateure", "castilla", "juvenil", "primavera", "srl", "esports", "legends"}
 TOKEN_ALIASES = {
     "utd": "united", "man": "manchester", "nottm": "nottingham", "sheff": "sheffield", "wed": "wednesday", "brom": "bromwich", "st": "saint",
     "ath": "athletic", "atl": "atletico", "boro": "middlesbrough", "dep": "deportivo", "munich": "munchen", "muenchen": "munchen", "koeln": "koln",
@@ -118,6 +121,9 @@ def score(a: str, b: str) -> float:
         return 0.0
     if ta == tb:
         return 1.0
+    qa, qb = {t for t in ta if t in QUALIFIERS}, {t for t in tb if t in QUALIFIERS}
+    if qa != qb:
+        return 0.0  # "Dortmund II" is not Borussia Dortmund; "Arsenal Women" is not Arsenal
     matched_a = {t for t in ta if any(_tok_match(t, u) for u in tb)}
     matched_b = {t for t in tb if any(_tok_match(t, u) for u in ta)}
     wa, wb = sum(_weight(t) for t in ta), sum(_weight(t) for t in tb)
