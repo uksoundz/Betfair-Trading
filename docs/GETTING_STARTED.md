@@ -7,20 +7,36 @@ the code. Stages 2 and 3 are optional upgrades you can do later.
 
 ## Stage 1: run it on the built-in data (10 minutes)
 
+### Windows: the double-click way (recommended)
+
+1. On the GitHub page click the green **Code** button, then **Download ZIP**. Unzip it.
+2. Open the unzipped folder. Double-click **`install.bat`**. A black window appears, installs
+   Python if it is missing, then installs TradeScout. Wait for "Done", press any key.
+   * If Windows shows "Windows protected your PC", click **More info**, then **Run anyway**.
+     The files are plain text; right-click, Edit to read them.
+3. Double-click **`replay.bat`**. It ranks a Saturday from last season, shows how the picks did,
+   and opens a web page with every plan.
+4. Later: double-click **`setup.bat`** to enter your keys (Stage 2), then **`scan.bat`** each
+   morning to rank today's matches.
+
+If you prefer typing commands, or you are on a Mac, carry on below.
+
 ### Step 1. Install Python
 
 Python is the program that runs TradeScout.
 
 * **Windows:** go to https://www.python.org/downloads/ and click the big yellow "Download Python"
-  button. Run the installer. **Tick the box that says "Add Python to PATH"** before clicking
+  button. Run the installer. **Tick the box that says "Add python.exe to PATH"** before clicking
   Install. This matters.
+  * Newer Windows machines come with a "Python install manager" (the `py` command) but no
+    Python. In that case type `py install 3` in a command window first.
 * **Mac:** go to https://www.python.org/downloads/ and download the macOS installer. Run it.
 
 ### Step 2. Download the code
 
 On the GitHub page for this repository click the green **Code** button, then **Download ZIP**.
 Unzip it. You now have a folder called something like `Betfair-Trading`. Remember where it is,
-for example `Downloads\Betfair-Trading`.
+for example `Documents\Betfair Trading\Betfair-Trading`.
 
 ### Step 3. Open a command window in that folder
 
@@ -33,12 +49,21 @@ Everything below is typed into that window, one line at a time, pressing Enter a
 
 ### Step 4. Install TradeScout
 
+Windows:
 ```
-pip install -e .
+py -m pip install -e .
+```
+Mac:
+```
+python3 -m pip install -e .
 ```
 
-Wait for it to finish (a minute or so). If you see `pip is not recognized` on Windows, Python
-was installed without "Add to PATH". Re-run the Python installer and tick that box.
+**The dot at the end matters.** It means "install the code in this folder". Wait for it to
+finish (a minute or so).
+
+If Windows says `'pip' is not recognized`, always use `py -m pip ...` instead of `pip ...`.
+If `tradescout` is not recognised afterwards, use `py -m tradescout.cli` in place of
+`tradescout` in every command below, or just use the `.bat` files.
 
 ### Step 5. Try it
 
@@ -184,8 +209,13 @@ each market. Ideas with positive edge in liquid markets rise to the top.
 
 ## If something goes wrong
 
+* `'pip' is not recognized`: type `py -m pip install -e .` (Windows) or
+  `python3 -m pip install -e .` (Mac). Do not forget the dot.
+* `py install -e` shows a long help page: that is the Python *install manager*, not pip. You
+  typed `py install` instead of `py -m pip install`. Run `py install 3` once to get Python, then
+  `py -m pip install -e .`
 * `tradescout is not recognized`: close the command window and open a new one in the folder, or
-  run `python -m tradescout.cli scan` instead of `tradescout scan`.
+  run `py -m tradescout.cli scan` instead of `tradescout scan`, or use the `.bat` files.
 * `No fixtures found for 2026-xx-xx`: the fixture feed is not set up (do Stage 2), or there are
   no matches in the covered leagues today. Use `--date` with a past date to replay.
 * `401` or `403` from football-data.org: the key was pasted wrongly. Run `tradescout setup` again.
