@@ -266,7 +266,7 @@ function renderJournal(j) {
     <div class="stat"><b>${s.roi == null ? '-' : spct(s.roi)}</b><span>return on £${s.staked} staked</span></div>`;
   if (!j.entries.length) { $('#journalList').innerHTML = '<div class="empty">No picks tracked yet. Open a plan and press <b>+ Track this pick</b>.</div>'; return; }
   $('#journalList').innerHTML = `<table class="j"><tr><th>Date</th><th>Match</th><th>Strategy</th><th class="n">Rating</th><th class="n">Pays off</th><th class="n">Entry</th><th class="n">Stake</th><th>Status</th><th>Result</th><th class="n">P/L</th><th></th></tr>
-    ${j.entries.map(e => `<tr><td>${e.date}</td><td>${esc(e.home)} v ${esc(e.away)}<div class="s meta">${esc(e.league)}</div></td><td>${esc(e.strategy_label)}</td>
+    ${j.entries.map(e => `<tr><td>${e.date}</td><td>${esc(e.home)} v ${esc(e.away)}<div class="s meta">${esc((status.leagues || {})[e.league] || e.league)}</div></td><td>${esc(e.strategy_label)}</td>
       <td class="n">${Math.round(e.score)}</td><td class="n">${pct(e.hit_prob)}</td><td class="n">${price(e.entry_price)}</td><td class="n">${money(e.stake_money)}</td>
       <td class="status-${e.status}">${e.status}</td><td>${e.result || '-'}</td><td class="n ${e.pnl_money == null ? '' : e.pnl_money >= 0 ? 'pos' : 'neg'}">${e.pnl_money == null ? '-' : money(e.pnl_money)}</td>
       <td><button class="small ghost danger" data-del="${e.id}" title="Remove">✕</button></td></tr>`).join('')}</table>`;
