@@ -167,3 +167,24 @@ def test_tennis_exchange_fixtures_prices_and_set_betting_orientation(fake):
     assert bt.resolve(f0, "SET_BETTING", "0-2") is not None and bt.resolve(f0, "SET_BETTING", "2-0")[1] != bt.resolve(f0, "SET_BETTING", "0-2")[1]
     line = next(k.split("Over ")[1] for k in mp.quotes if k.startswith("TOTAL_GAMES:Over "))
     assert bt.resolve(f0, "TOTAL_GAMES", f"Over {line}") is not None
+
+
+def test_inplay_flag_before_the_start_time_is_not_believed(client, day_fixtures):
+    from tradescout.data.betfair import _starts_in_future
+    from datetime import datetime, timedelta, timezone
+    future = (datetime.now(timezone.utc) + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    past = (datetime.now(timezone.utc) - timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    assert _starts_in_future({"marketStartTime": future}, {}) is True and _starts_in_future({"marketStartTime": past}, {}) is False
+    assert _starts_in_future({}, {}) is None
+    # a book that says in play for a market starting in five hours keeps its prices and is flagged in the diagnostics
+    fx = day_fixtures[0]
+    m = client.match_fixture(fx)
+    cats = client.catalogue([m.event_id])[m.event_id]
+    books = client.books([c["marketId"] for c in cats])
+    for b in books.values():
+        b["inplay"] = True
+    for c in cats:
+        c["marketStartTime"] = future
+    mp = client._build_prices(fx, cats, books, m)
+    assert mp.status == "ok" and not mp.inplay and mp.available and any("ignored" in f for f in mp.flags)
+    assert mp.raw_markets and mp.raw_markets[0]["inplay"] is True and mp.raw_markets[0]["start"] == future

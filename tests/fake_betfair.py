@@ -461,6 +461,11 @@ class FakeExchange:
             self.fail_login = bool(body["fail_login"])
         if "inplay" in body:
             self.inplay = set(body["inplay"] or [])
+            # a market in play has started: move its start time into the past (and back when cleared), as Betfair would show
+            for m in self._all_markets().values():
+                orig = m.setdefault("_start_orig", m["marketStartTime"])
+                m["marketStartTime"] = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S.000Z") if m["event"]["name"] in self.inplay else orig
+                m["description"]["marketTime"] = m["marketStartTime"]
         if "suspend" in body:
             self.suspend = set(body["suspend"] or [])
         if "delay_ms" in body:

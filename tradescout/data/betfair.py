@@ -132,6 +132,32 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _starts_in_future(cat: dict, book: dict, grace_minutes: float = 2.0) -> Optional[bool]:
+    """True when the market's own start time is still ahead of us (the exchange's in-play flag is then
+    not believed: a market cannot be in play before it starts). None when no start time is known."""
+    start = cat.get("marketStartTime") or (cat.get("description") or {}).get("marketTime")
+    if not start:
+        return None
+    try:
+        t = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t > datetime.now(timezone.utc) + timedelta(minutes=grace_minutes)
+
+
+def market_detail(cat: dict, book: Optional[dict]) -> dict:
+    """Compact raw view of one market for the diagnosis: what the exchange actually said."""
+    d = {"type": (cat.get("description") or {}).get("marketType") or cat.get("_type"), "market_id": cat.get("marketId"),
+         "start": cat.get("marketStartTime") or (cat.get("description") or {}).get("marketTime")}
+    if book:
+        d.update({"status": book.get("status"), "inplay": book.get("inplay"), "bet_delay": book.get("betDelay"), "matched": book.get("totalMatched"),
+                  "runners_priced": sum(1 for r in book.get("runners", []) if (r.get("ex") or {}).get("availableToBack") or (r.get("ex") or {}).get("availableToLay")),
+                  "runners": len(book.get("runners", [])), "delayed": book.get("isMarketDataDelayed")})
+    else:
+        d["status"] = "NO_BOOK"
+    return d
+
+
 def _aping_code(payload: dict) -> tuple[str, str]:
     err = payload.get("error") or {}
     data = err.get("data") or {}
@@ -391,11 +417,16 @@ class BetfairPrices:
             mtype = (cat.get("description") or {}).get("marketType") or ""
             if not book:
                 mp.market_status[mtype] = "NO_BOOK"
+                mp.raw_markets.append(market_detail(cat, None))
                 continue
             any_book = True
             status = book.get("status") or "OPEN"
             inplay = bool(book.get("inplay"))
+            if inplay and _starts_in_future(cat, book):
+                inplay = False  # the market has not started: the flag is not believed, prices are kept
+                mp.flags.append(f"{mtype}: exchange flagged in play before the start time; ignored")
             mp.market_status[mtype] = "INPLAY" if inplay else status
+            mp.raw_markets.append(market_detail(cat, book))
             if mtype == "MATCH_ODDS":
                 mp.total_matched = book.get("totalMatched")
                 mp.inplay = inplay

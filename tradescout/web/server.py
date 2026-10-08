@@ -247,7 +247,7 @@ def _scan_json(scan: ScanResult, sport: str) -> dict:
         matches.append({
             "price_status": ps.get("status", "none"), "price_note": ps.get("note", ""), "price_as_of": ps.get("as_of"),
             "exchange_event": ps.get("event_name"), "price_candidates": ps.get("candidates") or [], "inplay": bool(ps.get("inplay")),
-            "delayed": ps.get("delayed"), "markets": ps.get("markets") or {},
+            "delayed": ps.get("delayed"), "markets": ps.get("markets") or {}, "raw_markets": ps.get("raw_markets") or [], "price_flags": ps.get("flags") or [],
             "id": fx.fixture_id or fx.label, "home": fx.home, "away": fx.away, "league": fx.league,
             "league_name": LEAGUE_NAMES.get(fx.league, fx.league), "sport": sport,
             "kickoff": fx.kickoff.strftime("%H:%M") if fx.kickoff and fx.kickoff.strftime("%H:%M") != "00:00" else None,

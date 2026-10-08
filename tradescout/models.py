@@ -84,6 +84,8 @@ class MarketPrices:
     event_id: Optional[str] = None
     event_name: Optional[str] = None  # how the exchange names this fixture
     candidates: list = field(default_factory=list)  # nearest exchange events when unmatched: [(name, score)]
+    raw_markets: list = field(default_factory=list)  # what the exchange said per market (status, inplay, start, matched) for the diagnosis
+    flags: list = field(default_factory=list)        # oddities noticed while building (e.g. in-play flag before the start time)
 
     @property
     def available(self) -> bool:
@@ -93,7 +95,7 @@ class MarketPrices:
     def diagnostics(self) -> dict:
         return {"status": self.status, "note": self.note, "inplay": self.inplay, "delayed": self.delayed, "as_of": self.as_of,
                 "event_name": self.event_name, "event_id": self.event_id, "markets": dict(self.market_status),
-                "candidates": [list(c) for c in self.candidates], "quotes": len(self.quotes)}
+                "candidates": [list(c) for c in self.candidates], "quotes": len(self.quotes), "raw_markets": list(self.raw_markets), "flags": list(self.flags)}
 
     def quote(self, market: str, selection: str):
         """Quote for an order leg. Selection keys: home/away/draw for MATCH_ODDS, runner names otherwise."""

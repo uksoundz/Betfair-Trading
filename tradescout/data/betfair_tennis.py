@@ -14,7 +14,7 @@ from typing import Iterable, Optional
 
 from ..models import Fixture, MarketPrices
 from ..value import Quote
-from .betfair import BetfairPrices, FeedReport, _now
+from .betfair import BetfairPrices, FeedReport, _now, _starts_in_future, market_detail
 from .matching import fold
 
 TENNIS_EVENT_TYPE = "2"
@@ -236,10 +236,15 @@ class BetfairTennis:
             mtype = cat["_type"]
             if not book:
                 mp.market_status[mtype] = "NO_BOOK"
+                mp.raw_markets.append(market_detail(cat, None))
                 continue
             status = book.get("status") or "OPEN"
             inplay = bool(book.get("inplay"))
+            if inplay and _starts_in_future(cat, book):
+                inplay = False
+                mp.flags.append(f"{mtype}: exchange flagged in play before the start time; ignored")
             mp.market_status[mtype] = "INPLAY" if inplay else status
+            mp.raw_markets.append(market_detail(cat, book))
             if mtype == "MATCH_ODDS":
                 mp.total_matched = book.get("totalMatched")
                 mp.inplay = inplay
