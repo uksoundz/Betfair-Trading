@@ -75,6 +75,9 @@ class Settings:
     max_goals: int = 8
     bank: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_BANK", "1000")))
     kelly_fraction: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_KELLY", "0.25")))
+    # off = review only, paper = record slips in the journal, live = send orders to Betfair after the user confirms on screen
+    betting_mode: str = field(default_factory=lambda: os.getenv("TRADESCOUT_BETTING_MODE", "off"))
+    daily_cap: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_DAILY_CAP", "50")))
 
     @property
     def has_live_fixtures(self) -> bool:

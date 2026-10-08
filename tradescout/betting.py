@@ -5,8 +5,10 @@ liability), rounds prices onto Betfair's tick ladder and sizes to pence, flags l
 exchange minimum, and, when a Betfair connection exists, looks up the market and selection ids
 and the best price currently available so the user can see whether the plan price is there.
 
-Nothing in this module sends orders. The slip is for the user to review; paper mode records it in
-the journal so the strategy can be judged on the prices that were actually available.
+`build_slip` never sends anything. `place_slip` does, and only after the server has checked that the
+user's betting mode is "live" and the user has confirmed the slip on screen. It refuses lines that
+are unresolved or below the exchange minimum, enforces the daily cap, and sends LIMIT orders at
+the plan price that lapse at kick-off if unmatched.
 """
 from __future__ import annotations
 
@@ -138,3 +140,74 @@ def build_slip(idea: TradeIdea, stake_money: float, bf=None, min_stake: float = 
     return BetSlip(fx.label, fx.date.isoformat(), idea.strategy, idea.strategy_label, round(stake_money, 2), lines,
                    round(sum(l.size for l in lines if l.side == "back"), 2),
                    round(sum(l.liability for l in lines), 2), source, warnings)
+
+
+@dataclass
+class PlacedLine:
+    market_label: str
+    runner_name: str
+    side: str
+    price: float
+    size: float
+    status: str            # SUCCESS | FAILURE | SKIPPED
+    bet_id: Optional[str] = None
+    size_matched: float = 0.0
+    avg_price_matched: Optional[float] = None
+    order_status: Optional[str] = None  # EXECUTABLE (waiting at the plan price) | EXECUTION_COMPLETE (fully matched)
+    error: Optional[str] = None
+
+
+@dataclass
+class PlacementResult:
+    ok: bool
+    lines: list[PlacedLine]
+    committed: float          # back stakes + lay liabilities actually accepted by the exchange
+    bet_ids: list[str]
+    message: str
+
+    def to_dict(self) -> dict:
+        return {**asdict(self), "lines": [asdict(l) for l in self.lines]}
+
+
+def place_slip(slip: BetSlip, bf, customer_ref: str, daily_cap: float, committed_today: float) -> PlacementResult:
+    """Send the slip's valid lines to the exchange. The caller must already hold the user's confirmation."""
+    sendable = [l for l in slip.lines if l.market_id and l.selection_id and not l.below_minimum]
+    skipped = [l for l in slip.lines if l not in sendable]
+    if not sendable:
+        return PlacementResult(False, [], 0.0, [], "Nothing to place: every line is unresolved or below the exchange minimum.")
+    committed = round(sum(l.liability for l in sendable), 2)
+    if committed_today + committed > daily_cap + 1e-9:
+        return PlacementResult(False, [], 0.0, [],
+                               f"Daily cap would be exceeded: £{committed_today:.2f} already committed today, this slip adds "
+                               f"£{committed:.2f}, cap is £{daily_cap:.2f}. Raise the cap in Settings or reduce the stake.")
+    placed: list[PlacedLine] = [PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, "SKIPPED",
+                                           error="; ".join(l.warnings) or "not sent") for l in skipped]
+    bet_ids: list[str] = []
+    by_market: dict[str, list[SlipLine]] = {}
+    for l in sendable:
+        by_market.setdefault(l.market_id, []).append(l)
+    sent_total = 0.0
+    for n, (market_id, lines) in enumerate(by_market.items()):
+        instructions = [{"selectionId": l.selection_id, "side": l.side, "price": l.plan_price, "size": l.size} for l in lines]
+        try:
+            report = bf.place_orders(market_id, instructions, f"{customer_ref}-{n}")
+        except Exception as exc:
+            for l in lines:
+                placed.append(PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, "FAILURE", error=str(exc)))
+            continue
+        reports = report.get("instructionReports", [])
+        for k, l in enumerate(lines):
+            r = reports[k] if k < len(reports) else {}
+            status = r.get("status", report.get("status", "FAILURE"))
+            line = PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, status, r.get("betId"),
+                              float(r.get("sizeMatched") or 0.0), r.get("averagePriceMatched"), r.get("orderStatus"),
+                              r.get("errorCode") or report.get("errorCode"))
+            placed.append(line)
+            if status == "SUCCESS":
+                sent_total += l.liability
+                if line.bet_id:
+                    bet_ids.append(str(line.bet_id))
+    ok = any(p.status == "SUCCESS" for p in placed)
+    n_ok = sum(1 for p in placed if p.status == "SUCCESS")
+    msg = f"{n_ok} of {len(sendable)} lines placed, £{sent_total:.2f} committed." if ok else "No lines were accepted by the exchange."
+    return PlacementResult(ok, placed, round(sent_total, 2), bet_ids, msg)

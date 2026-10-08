@@ -73,6 +73,9 @@
     </div>
     <div class="grid" id="journalSummary"></div>
     <div id="journalList"></div>
+    <h3 style="color:var(--muted);margin-top:22px">Open orders on Betfair</h3>
+    <div class="toolbar"><button id="openBetsBtn" class="small">Refresh open orders</button><span class="meta">Orders placed from this app that are waiting for the plan price or partly matched. Cancel removes the unmatched part.</span></div>
+    <div id="openBets"></div>
   </section>
 
   <section id="view-settings" class="view">
@@ -106,6 +109,14 @@
         <label class="field">Bank (£) <input id="bank" type="number" min="10" step="10"></label>
         <label class="field">Style <select id="kelly"><option value="0.1">Cautious (10% Kelly)</option><option value="0.25">Standard (25% Kelly)</option><option value="0.5">Aggressive (50% Kelly)</option></select></label>
         <div class="row"><button class="primary" id="saveStake">Save</button><span class="meta" id="stakeResult"></span></div>
+      </div>
+      <div class="card">
+        <h2>Betting <span class="light" id="lightBetting"></span></h2>
+        <p class="meta">Controls what the <b>Bet slip</b> is allowed to do. <b>Off</b>: review and copy only. <b>Paper</b>: record slips in My picks without placing anything. <b>Live</b>: after you press a confirmation button, the app sends the slip's lines to Betfair as limit orders at the plan price. Unmatched orders lapse at kick-off. Nothing is ever sent without that confirmation.</p>
+        <label class="field">Mode <select id="betMode"><option value="off">Off (review only)</option><option value="paper">Paper (record, do not place)</option><option value="live">Live (place on Betfair after I confirm)</option></select></label>
+        <label class="field">Daily cap (£ total at risk per day in live mode) <input id="dailyCap" type="number" min="0" step="5"></label>
+        <div class="row"><button class="primary" id="saveBetting">Save</button><span class="meta" id="bettingResult"></span></div>
+        <div class="meta" id="bettingInfo" style="margin-top:8px"></div>
       </div>
       <div class="card">
         <h2>Data</h2>

@@ -48,7 +48,9 @@ breakdown for a single game.
 * **My picks**: a journal that settles tracked picks against real results (strike rate, P/L, ROI).
 * **Settings**: enter the football-data.org key and Betfair details in the browser, with connection tests.
 * **Bet slip**: every pre-match selection of a plan with size, risk, Betfair market/selection ids and the
-  live best price, ready to review, copy or record as a paper bet. Order placement is not included.
+  live best price, ready to review, copy, record as a paper bet, or (betting mode Live, after an on-screen
+  confirmation) place on Betfair as limit orders that lapse at kick-off, under a daily cap. Open orders can be
+  cancelled from My picks.
 
 ## Quick start
 

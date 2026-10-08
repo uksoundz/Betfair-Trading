@@ -45,6 +45,12 @@ async function init() {
   $('#clearBf').onclick = () => saveSettings({ clear_betfair: true }, '#bfResult');
   $('#testBf').onclick = () => testConn('/api/test/betfair', '#bfResult', r => `Logged in. ${r.football_events_next_2_days} football events in the next 2 days.`);
   $('#saveStake').onclick = () => saveSettings({ bank: +$('#bank').value, kelly_fraction: +$('#kelly').value }, '#stakeResult');
+  $('#saveBetting').onclick = () => {
+    const mode = $('#betMode').value;
+    if (mode === 'live' && !confirm('Live mode lets the Bet slip send real orders to Betfair after you press a confirmation button. Turn it on?')) { $('#betMode').value = status.betting_mode || 'off'; return; }
+    saveSettings({ betting_mode: mode, daily_cap: +$('#dailyCap').value }, '#bettingResult');
+  };
+  $('#openBetsBtn').onclick = loadOpenBets;
   await loadCalendar(status.today);
   scan();
 }
@@ -61,6 +67,7 @@ function renderPills() {
   $('#pills').innerHTML = `
     <span class="pill" data-go="settings" title="Click to set up"><span class="dot ${status.live_fixtures ? 'on' : ''}"></span>${status.live_fixtures ? 'Live fixtures' : 'Built-in fixtures only'}</span>
     <span class="pill" data-go="settings" title="Click to set up"><span class="dot ${status.betfair ? 'on' : status.betfair_error ? 'warn' : ''}"></span>${status.betfair ? 'Betfair prices' : 'No exchange prices'}</span>
+    <span class="pill" data-go="settings" title="Betting mode"><span class="dot ${status.betting_mode === 'live' ? 'warn' : status.betting_mode === 'paper' ? 'on' : ''}"></span>${status.betting_mode === 'live' ? 'LIVE betting on' : status.betting_mode === 'paper' ? 'Paper betting' : 'Betting off'}</span>
     <span class="pill" data-go="settings"><span class="dot on"></span>Bank £${status.bank}</span>`;
   document.querySelectorAll('.pill').forEach(p => p.onclick = () => showView(p.dataset.go));
   $('#journalCount').textContent = j.picks ? j.picks : '';
@@ -222,13 +229,38 @@ async function openSlip(m, strategy, stake) {
       ${s.warnings.map(w => `<div class="warn" style="margin-top:6px">! ${esc(w)}</div>`).join('')}
       <p class="meta" style="margin-top:10px"><b>How to place it:</b> press <b>Open in Betfair</b> on a line (or <b>Open all markets</b>). On the Betfair page click the <b>${s.lines.some(l => l.side === 'lay') ? 'pink Lay' : 'blue Back'}</b> price for the selection shown, type the <b>Size</b> as your stake, set the odds to the <b>Plan price</b> if the market is not already there, and press Place bets. Betfair does not let outside apps pre-fill its betslip, so that last click is yours. ✓ means the plan price is available now; ✗ means it is not, so leave the order at the plan price and let it lapse at kick-off if unmatched.</p>
       <div class="row" style="margin-top:12px">
-        ${urls.length ? `<button id="slipOpenAll" class="primary">Open all markets in Betfair (${urls.length})</button>` : '<button class="primary" disabled title="Connect Betfair in Settings">Open in Betfair</button>'}
+        ${status.betting_mode === 'live' && status.betfair ? `<button id="slipPlace" class="primary" style="background:var(--bad);border-color:var(--bad)">Place ${s.lines.filter(l => l.market_id && !l.below_minimum).length} bets on Betfair · ${money(s.total_liability)} at risk</button>` : ''}
+        ${urls.length ? `<button id="slipOpenAll" class="${status.betting_mode === 'live' ? '' : 'primary'}">Open all markets in Betfair (${urls.length})</button>` : '<button class="primary" disabled title="Connect Betfair in Settings">Open in Betfair</button>'}
         <button id="slipPaper">Record as paper bet</button>
         <button id="slipCopy">Copy slip</button>
         <button id="slipClose" class="ghost">Close</button>
       </div>
+      <div class="meta" style="margin-top:8px">${status.betting_mode === 'live' ? `Live betting is ON. Daily cap £${status.daily_cap}, £${(status.committed_today || 0).toFixed(2)} committed today.` : status.betting_mode === 'paper' ? 'Paper mode: slips are recorded, nothing is sent to Betfair. Switch to Live in Settings when ready.' : 'Betting mode is Off: review and copy only. Choose Paper or Live in Settings.'}</div>
+      <div id="slipConfirm"></div>
       ${urls.length ? '' : '<div class="meta" style="margin-top:8px">Connect Betfair in Settings and the slip links straight to each market, with the live price check filled in.</div>'}`;
     if (urls.length) $('#slipOpenAll').onclick = () => { urls.forEach((u, k) => setTimeout(() => window.open(u, '_blank', 'noopener'), k * 150)); toast(urls.length > 1 ? 'Opening each market in a new tab. Allow pop-ups for this page if only one opened.' : 'Opening the market in Betfair.'); };
+    if ($('#slipPlace')) $('#slipPlace').onclick = () => {
+      const sendable = s.lines.filter(l => l.market_id && !l.below_minimum);
+      $('#slipConfirm').innerHTML = `<div class="banner err" style="margin-top:10px"><b>Confirm: send ${sendable.length} order${sendable.length === 1 ? '' : 's'} to Betfair now?</b>
+        <ul style="margin:6px 0 6px 18px">${sendable.map(l => `<li>${l.side.toUpperCase()} ${esc(l.runner_name)} (${esc(l.market_label)}) at ${l.plan_price.toFixed(2)}, size ${money(l.size)}, risk ${money(l.liability)}</li>`).join('')}</ul>
+        Total at risk ${money(sendable.reduce((a, l) => a + l.liability, 0))}. Orders are limit orders at the plan price and lapse at kick-off if unmatched. This uses real money.
+        <div class="row" style="margin-top:8px"><button id="slipGo" class="primary" style="background:var(--bad);border-color:var(--bad)">Yes, place the bets</button><button id="slipNo" class="ghost">No, go back</button></div></div>`;
+      $('#slipNo').onclick = () => $('#slipConfirm').innerHTML = '';
+      $('#slipGo').onclick = async () => {
+        $('#slipGo').disabled = true; $('#slipGo').textContent = 'Sending to Betfair…';
+        try {
+          const r = await api('/api/betslip/place', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, stake_money: +$('#slipStake').value, confirm: true }) });
+          const res = r.result;
+          $('#slipConfirm').innerHTML = `<div class="banner ${res.ok ? '' : 'err'}" style="margin-top:10px"><b>${esc(res.message)}</b>
+            <table class="sc" style="margin-top:6px"><tr><th>Line</th><th class="n">Price</th><th class="n">Size</th><th>Status</th><th class="n">Matched</th><th>Bet id</th></tr>
+            ${res.lines.map(l => `<tr><td>${l.side.toUpperCase()} ${esc(l.runner_name)} (${esc(l.market_label)})</td><td class="n">${l.price.toFixed(2)}</td><td class="n">${money(l.size)}</td>
+              <td class="${l.status === 'SUCCESS' ? 'pos' : 'neg'}">${l.status}${l.order_status ? ' · ' + (l.order_status === 'EXECUTION_COMPLETE' ? 'matched' : 'waiting for price') : ''}${l.error ? ' · ' + esc(l.error) : ''}</td>
+              <td class="n">${l.size_matched ? money(l.size_matched) + (l.avg_price_matched ? ' @ ' + l.avg_price_matched.toFixed(2) : '') : '-'}</td><td class="meta">${l.bet_id || '-'}</td></tr>`).join('')}</table>
+            <div class="meta" style="margin-top:6px">£${(r.committed_today || 0).toFixed(2)} of your £${r.daily_cap} daily cap is now committed. Open orders can be cancelled from My picks.</div></div>`;
+          if (res.ok) { const idea = m.ideas.find(x => x.strategy === strategy); if (idea) idea.tracked = true; await loadStatus(); toast('Bets placed and logged in My picks.'); }
+        } catch (e) { $('#slipConfirm').innerHTML = `<div class="banner err" style="margin-top:10px"><b>Not placed.</b> ${esc(e.message)}</div>`; }
+      };
+    };
     $('#slipClose').onclick = () => modal.hidden = true;
     $('#slipRecalc').onclick = () => openSlip(m, strategy, +$('#slipStake').value);
     $('#slipCopy').onclick = async () => {
@@ -314,11 +346,31 @@ function renderJournal(j) {
   $('#journalList').innerHTML = `<table class="j"><tr><th>Date</th><th>Match</th><th>Strategy</th><th class="n">Rating</th><th class="n">Pays off</th><th class="n">Entry</th><th class="n">Stake</th><th>Status</th><th>Result</th><th class="n">P/L</th><th></th></tr>
     ${j.entries.map(e => `<tr><td>${e.date}</td><td>${esc(e.home)} v ${esc(e.away)}<div class="s meta">${esc((status.leagues || {})[e.league] || e.league)}</div></td><td>${esc(e.strategy_label)}</td>
       <td class="n">${Math.round(e.score)}</td><td class="n">${pct(e.hit_prob)}</td><td class="n">${price(e.entry_price)}</td><td class="n">${money(e.stake_money)}</td>
-      <td class="status-${e.status}">${e.status}</td><td>${e.result || '-'}</td><td class="n ${e.pnl_money == null ? '' : e.pnl_money >= 0 ? 'pos' : 'neg'}">${e.pnl_money == null ? '-' : money(e.pnl_money)}</td>
+      <td class="status-${e.status}">${e.status}${e.placed === 'live' ? ' <span class="count" title="placed on Betfair">LIVE</span>' : e.placed === 'paper' ? ' <span class="meta">paper</span>' : ''}</td><td>${e.result || '-'}</td><td class="n ${e.pnl_money == null ? '' : e.pnl_money >= 0 ? 'pos' : 'neg'}">${e.pnl_money == null ? '-' : money(e.pnl_money)}</td>
       <td><button class="small ghost danger" data-del="${e.id}" title="Remove">✕</button></td></tr>`).join('')}</table>`;
   document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/api/journal/' + b.dataset.del, { method: 'DELETE' }); await loadJournal(); await loadStatus(); });
 }
-async function loadJournal() { try { renderJournal(await api('/api/journal')); } catch (e) { toast('Could not load picks: ' + e.message); } }
+async function loadJournal() { try { renderJournal(await api('/api/journal')); } catch (e) { toast('Could not load picks: ' + e.message); } loadOpenBets(); }
+
+async function loadOpenBets() {
+  const el = $('#openBets');
+  if (!status.betfair) { el.innerHTML = '<div class="meta">Connect Betfair in Settings to see open orders.</div>'; return; }
+  el.innerHTML = '<div class="spinner">Loading…</div>';
+  try {
+    const r = await api('/api/bets/open');
+    if (!r.ok) { el.innerHTML = `<div class="warn">! ${esc(r.error)}</div>`; return; }
+    if (!r.orders.length) { el.innerHTML = '<div class="meta">No open orders from this app.</div>'; return; }
+    el.innerHTML = `<table class="j"><tr><th>Placed</th><th>Market</th><th>Side</th><th class="n">Price</th><th class="n">Size</th><th class="n">Matched</th><th class="n">Waiting</th><th>Status</th><th></th></tr>
+      ${r.orders.map(o => `<tr><td>${(o.placed || '').replace('T', ' ').slice(0, 16)}</td><td><a href="${esc(o.url)}" target="_blank" rel="noopener">${esc(o.market_id)}</a> · sel ${o.selection_id}</td><td>${o.side}</td>
+        <td class="n">${o.price}</td><td class="n">${money(o.size || 0)}</td><td class="n">${money(o.matched || 0)}${o.avg_price ? ' @ ' + o.avg_price : ''}</td><td class="n">${money(o.remaining || 0)}</td><td>${o.status}</td>
+        <td>${(o.remaining || 0) > 0 ? `<button class="small ghost danger" data-cancel="${esc(o.market_id)}" data-bet="${esc(o.bet_id)}">Cancel unmatched</button>` : ''}</td></tr>`).join('')}</table>`;
+    document.querySelectorAll('[data-cancel]').forEach(b => b.onclick = async () => {
+      if (!confirm('Cancel the unmatched part of this order?')) return;
+      try { await api('/api/bets/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ market_id: b.dataset.cancel, bet_ids: [b.dataset.bet] }) }); toast('Cancelled.'); loadOpenBets(); }
+      catch (e) { toast('Cancel failed: ' + e.message, 6000); }
+    });
+  } catch (e) { el.innerHTML = `<div class="warn">! ${esc(e.message)}</div>`; }
+}
 async function settleJournal() {
   const b = $('#settleBtn'); b.disabled = true; b.textContent = 'Checking results…';
   try { const r = await api('/api/journal/settle', { method: 'POST' }); renderJournal(r); await loadStatus(); toast(r.settled ? `${r.settled} pick(s) settled.` : 'No new results yet.'); }
@@ -334,6 +386,9 @@ async function loadSettings() {
     $('#bfKey').value = ''; $('#bfKey').placeholder = s.betfair_app_key ? `saved: ${s.betfair_app_key}` : 'e.g. aBcDeFgHiJkLmNoP';
     $('#bfUser').value = s.betfair_username || ''; $('#bfPass').value = ''; $('#bfPass').placeholder = s.has_betfair_password ? 'saved (type to replace)' : '';
     $('#bank').value = s.bank; $('#kelly').value = String(s.kelly_fraction);
+    $('#betMode').value = s.betting_mode || 'off'; $('#dailyCap').value = s.daily_cap;
+    $('#lightBetting').className = 'light ' + (s.betting_mode === 'live' ? 'on' : '');
+    $('#bettingInfo').textContent = s.betting_mode === 'live' ? `Live: £${(s.committed_today || 0).toFixed(2)} of £${s.daily_cap} committed today.` + (status.betfair ? '' : ' Betfair is not connected, so nothing can be placed until it is.') : '';
     $('#lightFixtures').className = 'light ' + (status.live_fixtures ? 'on' : ''); $('#lightBetfair').className = 'light ' + (status.betfair ? 'on' : '');
     const lr = status.live_results || {};
     $('#dataInfo').innerHTML = `Seasons loaded: ${status.seasons.join(', ')}.<br>Live results cache: ${lr.state}${lr.updated ? ' (updated ' + lr.updated + ')' : ''}.<br>Settings file: <code>${esc(s.env_path)}</code> (keep it private).`

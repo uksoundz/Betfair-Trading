@@ -28,8 +28,14 @@ TradeScout. Keep the black window open while you use it.
   there), the size to enter and what is at risk. Change the stake and recalculate. With Betfair
   connected, **Open in Betfair** takes you straight to each market: click the price for the
   selection shown, type the size, press Place bets. Betfair does not allow outside apps to
-  pre-fill its betslip, so that final click is always yours. **Record as paper bet** logs the
-  slip in My picks; **Copy slip** puts it on the clipboard.
+  pre-fill its betslip, so with betting mode Off or Paper that final click is yours.
+  **Record as paper bet** logs the slip in My picks; **Copy slip** puts it on the clipboard.
+* **Live betting** (Settings > Betting > Live): the slip gains a red **Place bets on Betfair**
+  button. Pressing it shows every order and the total at risk; pressing **Yes, place the bets**
+  sends them as limit orders at the plan price. Unmatched orders lapse at kick-off. A daily cap
+  (default £50 at risk) blocks anything over the limit. Placed bets appear in My picks marked
+  LIVE, and **Open orders on Betfair** at the bottom of My picks lets you cancel the unmatched part.
+  Only the pre-match legs are placed; the in-play exits and stops remain yours to do.
 * **Past dates** show the real result and whether each plan paid off.
 
 ### Set up in the app (instead of setup.bat)

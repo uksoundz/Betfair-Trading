@@ -27,7 +27,7 @@ from ..config import LEAGUE_NAMES, settings, write_env
 from ..data.base import NoPrices
 from ..data.combined import CombinedResults
 from ..data.openfootball import OpenFootballProvider
-from ..betting import build_slip
+from ..betting import build_slip, place_slip
 from ..journal import Journal
 from ..report.narrative import idea_verdict, match_summary
 from ..scout import ScanResult, Scout
@@ -173,6 +173,7 @@ def status():
         "live_fixtures": rt.live_fixtures, "betfair": settings.has_betfair and rt.betfair_error is None, "betfair_error": rt.betfair_error,
         "bank": settings.bank, "kelly_fraction": settings.kelly_fraction, "seasons": rt.sample.available_seasons(), "leagues": leagues,
         "today": date.today().isoformat(), "live_results": rt.results.status, "journal": journal.summary(),
+        "betting_mode": settings.betting_mode, "daily_cap": settings.daily_cap, "committed_today": journal.committed_today("live"),
     }
 
 
@@ -228,6 +229,8 @@ class SettingsIn(BaseModel):
     betfair_password: Optional[str] = None
     bank: Optional[float] = None
     kelly_fraction: Optional[float] = None
+    betting_mode: Optional[str] = None
+    daily_cap: Optional[float] = None
     clear_football: bool = False
     clear_betfair: bool = False
 
@@ -238,6 +241,7 @@ def get_settings():
         "football_data_org_key": _mask(settings.football_data_org_key), "has_football_key": bool(settings.football_data_org_key),
         "betfair_app_key": _mask(settings.betfair_app_key), "betfair_username": settings.betfair_username or "",
         "has_betfair_password": bool(settings.betfair_password), "bank": settings.bank, "kelly_fraction": settings.kelly_fraction,
+        "betting_mode": settings.betting_mode, "daily_cap": settings.daily_cap, "committed_today": journal.committed_today("live"),
         "env_path": str(Path(settings.cache_dir).parent / ".env"),
     }
 
@@ -263,6 +267,10 @@ def post_settings(body: SettingsIn):
         values["TRADESCOUT_BANK"] = str(body.bank)
     if body.kelly_fraction is not None and 0 < body.kelly_fraction <= 1:
         values["TRADESCOUT_KELLY"] = str(body.kelly_fraction)
+    if body.betting_mode in ("off", "paper", "live"):
+        values["TRADESCOUT_BETTING_MODE"] = body.betting_mode
+    if body.daily_cap is not None and body.daily_cap >= 0:
+        values["TRADESCOUT_DAILY_CAP"] = str(body.daily_cap)
     write_env(values)
     rt = Runtime()
     return {"ok": True, **get_settings(), "status": status()}
@@ -322,6 +330,69 @@ def betslip_preview(body: SlipIn):
     idea, stake = _rebuild_idea(body)
     bf = rt.prices if (settings.has_betfair and rt.betfair_error is None and hasattr(rt.prices, "resolve")) else None
     return build_slip(idea, stake, bf).to_dict()
+
+
+class PlaceIn(SlipIn):
+    confirm: bool = False
+
+
+def _betfair_ready(method: str) -> bool:
+    return bool(settings.has_betfair and rt.betfair_error is None and hasattr(rt.prices, method))
+
+
+@app.post("/api/betslip/place")
+def betslip_place(body: PlaceIn):
+    """Send the slip to Betfair. Needs betting mode 'live', a working Betfair connection and the
+    confirm flag the UI sets only after the user has pressed the confirmation button."""
+    if settings.betting_mode != "live":
+        raise HTTPException(403, "Live betting is switched off. Turn it on in Settings > Betting when you are ready.")
+    if not _betfair_ready("place_orders"):
+        raise HTTPException(400, "Betfair is not connected. Add your application key, username and password in Settings.")
+    if not body.confirm:
+        raise HTTPException(400, "Placement needs confirmation.")
+    idea, stake = _rebuild_idea(body)
+    slip = build_slip(idea, stake, rt.prices)
+    ref = f"ts{int(time.time())}"
+    result = place_slip(slip, rt.prices, ref, settings.daily_cap, journal.committed_today("live"))
+    if result.ok:
+        e = journal.add(idea, stake, note="placed on Betfair")
+        journal.attach_slip(e.id, [asdict(l) for l in slip.lines], placed="live", refs=result.bet_ids, total=result.committed)
+        rt.cache.pop(body.date, None)
+    return {"ok": result.ok, "result": result.to_dict(), "slip": slip.to_dict(), "summary": journal.summary(),
+            "committed_today": journal.committed_today("live"), "daily_cap": settings.daily_cap}
+
+
+@app.get("/api/bets/open")
+def bets_open():
+    if not _betfair_ready("current_orders"):
+        return {"ok": False, "error": "Betfair is not connected.", "orders": []}
+    try:
+        orders = rt.prices.current_orders()
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "orders": []}
+    out = []
+    for o in orders:
+        ps = o.get("priceSize", {})
+        out.append({"bet_id": o.get("betId"), "market_id": o.get("marketId"), "selection_id": o.get("selectionId"), "side": o.get("side"),
+                    "price": ps.get("price"), "size": ps.get("size"), "matched": o.get("sizeMatched"), "remaining": o.get("sizeRemaining"),
+                    "status": o.get("status"), "placed": o.get("placedDate"), "avg_price": o.get("averagePriceMatched"),
+                    "url": f"https://www.betfair.com/exchange/plus/football/market/{o.get('marketId')}"})
+    return {"ok": True, "orders": out}
+
+
+class CancelIn(BaseModel):
+    market_id: str
+    bet_ids: Optional[list[str]] = None
+
+
+@app.post("/api/bets/cancel")
+def bets_cancel(body: CancelIn):
+    if not _betfair_ready("cancel_orders"):
+        raise HTTPException(400, "Betfair is not connected.")
+    try:
+        return {"ok": True, "report": rt.prices.cancel_orders(body.market_id, body.bet_ids)}
+    except Exception as exc:
+        raise HTTPException(502, str(exc))
 
 
 @app.post("/api/betslip/paper")

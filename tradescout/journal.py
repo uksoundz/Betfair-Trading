@@ -37,7 +37,10 @@ class JournalEntry:
     pnl_per_unit: Optional[float] = None
     result: Optional[str] = None
     note: str = ""
-    slip: list = field(default_factory=list)  # the reviewed selections (paper mode): market, selection, side, price, size
+    slip: list = field(default_factory=list)  # the reviewed selections: market, selection, side, price, size
+    placed: str = ""  # "" | paper | live
+    bet_refs: list = field(default_factory=list)  # exchange bet ids when placed live
+    placed_total: float = 0.0  # money committed on the exchange (back stakes + lay liabilities)
 
 
 @dataclass
@@ -69,12 +72,20 @@ class Journal:
         self.save()
         return e
 
-    def attach_slip(self, entry_id: str, legs: list) -> None:
+    def attach_slip(self, entry_id: str, legs: list, placed: str = "paper", refs: list | None = None, total: float = 0.0) -> None:
         for e in self.entries:
             if e.id == entry_id:
                 e.slip = list(legs)
+                e.placed = placed
+                e.bet_refs = list(refs or [])
+                e.placed_total = round(total, 2)
                 break
         self.save()
+
+    def committed_today(self, mode: str = "live") -> float:
+        """Money sent to the exchange today in the given mode; used for the daily cap."""
+        today = date.today().isoformat()
+        return round(sum(e.placed_total for e in self.entries if e.placed == mode and e.created[:10] == today), 2)
 
     def remove(self, entry_id: str) -> bool:
         before = len(self.entries)

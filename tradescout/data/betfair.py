@@ -109,6 +109,35 @@ class BetfairPrices:
                     return cat["marketId"], r["selectionId"], best_back, best_lay
         return None
 
+    # ----- orders (only called after the user confirms a slip on screen) -----------------------
+    def place_orders(self, market_id: str, instructions: list[dict], customer_ref: str) -> dict:
+        """Send LIMIT orders for one market. Each instruction: selectionId, side (back|lay), price, size.
+        persistenceType LAPSE means anything still unmatched is cancelled when the market turns in play,
+        so a plan price that never arrives simply expires at kick-off."""
+        payload = {
+            "marketId": market_id,
+            "instructions": [{"selectionId": int(i["selectionId"]), "handicap": 0, "side": i["side"].upper(), "orderType": "LIMIT",
+                              "limitOrder": {"size": round(float(i["size"]), 2), "price": float(i["price"]), "persistenceType": "LAPSE"}}
+                             for i in instructions],
+            "customerRef": customer_ref[:32],
+            "customerStrategyRef": "tradescout",
+        }
+        return self._rpc("placeOrders", payload)
+
+    def current_orders(self, market_ids: list[str] | None = None) -> list[dict]:
+        """Open and recently matched orders this app placed (tagged with the tradescout strategy ref)."""
+        params: dict = {"orderProjection": "ALL", "customerStrategyRefs": ["tradescout"], "fromRecord": 0, "recordCount": 200}
+        if market_ids:
+            params["marketIds"] = market_ids
+        return self._rpc("listCurrentOrders", params).get("currentOrders", [])
+
+    def cancel_orders(self, market_id: str, bet_ids: list[str] | None = None) -> dict:
+        """Cancel unmatched orders on a market (all of them when bet_ids is None)."""
+        params: dict = {"marketId": market_id}
+        if bet_ids:
+            params["instructions"] = [{"betId": b} for b in bet_ids]
+        return self._rpc("cancelOrders", params)
+
     def prices(self, fixture: Fixture) -> MarketPrices:
         event_id = self._find_event(fixture)
         if not event_id:
