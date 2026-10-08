@@ -38,6 +38,8 @@ breakdown for a single game.
 
 ## Quick start
 
+New to the command line? Follow [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md), it walks through every click.
+
 ```bash
 pip install -e ".[dev]"
 tradescout scan --date 2025-11-08 --show-results        # replay a Saturday from the bundled data
@@ -60,6 +62,8 @@ Premier League, Championship, Bundesliga, La Liga, Serie A and Ligue 1 from the 
 | Exchange prices | `export BETFAIR_APP_KEY=... BETFAIR_SESSION_TOKEN=...` (or username/password) | real edge, real entry prices, liquidity |
 | More history | `tradescout refresh-data --seasons 2025-26 2026-27` | keeping ratings current |
 | Closing-odds backtest | `tradescout.data.football_data_couk.FootballDataCoUk` | measuring ROI against real prices |
+
+Run `tradescout setup` to enter the keys once; they are saved to a `.env` file in the folder.
 
 Without a price feed the tool still ranks, but prices are the model's fair prices shaded by a
 typical exchange overround and the Edge column is blank. The ranking then reflects the payoff

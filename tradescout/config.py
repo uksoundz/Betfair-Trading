@@ -9,6 +9,23 @@ from pathlib import Path
 PACKAGE_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = PACKAGE_ROOT.parent
 SAMPLE_DATA_DIR = REPO_ROOT / "data" / "sample"
+ENV_FILE = REPO_ROOT / ".env"
+
+
+def load_env_file(path: Path = ENV_FILE) -> None:
+    """Read KEY=value lines from .env so users never have to set environment variables by hand.
+    Real environment variables win over the file."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_env_file()
 
 # Betfair liquidity proxy per competition, 1.0 = deepest markets. Used in ranking so that a
 # marginal edge in a thin market never outranks a similar edge in the Premier League.

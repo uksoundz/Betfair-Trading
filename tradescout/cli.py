@@ -128,6 +128,36 @@ def cmd_refresh(args) -> int:
     return 0
 
 
+def cmd_setup(args) -> int:
+    """Ask for the API keys and save them to .env next to the code."""
+    from .config import ENV_FILE
+    print("TradeScout setup. Press Enter to skip any question.\n")
+    print("1) Fixtures: free key from https://www.football-data.org/client/register (arrives by email)")
+    fd = input("   football-data.org API key: ").strip()
+    print("\n2) Betfair (optional, for real prices). Needs a Betfair account with an Application Key.")
+    print("   Guide: https://developer.betfair.com/get-started/  -> create a Delayed App Key (free).")
+    bf_key = input("   Betfair application key: ").strip()
+    bf_user = input("   Betfair username (leave blank to skip prices): ").strip()
+    bf_pass = input("   Betfair password: ").strip() if bf_user else ""
+    print("\n3) Bank size used for stake suggestions.")
+    bank = input("   Bank in pounds [1000]: ").strip() or "1000"
+    lines = ["# TradeScout settings - keep this file private"]
+    if fd:
+        lines.append(f"FOOTBALL_DATA_API_KEY={fd}")
+    if bf_key:
+        lines.append(f"BETFAIR_APP_KEY={bf_key}")
+    if bf_user:
+        lines.append(f"BETFAIR_USERNAME={bf_user}")
+        lines.append(f"BETFAIR_PASSWORD={bf_pass}")
+    lines.append(f"TRADESCOUT_BANK={bank}")
+    ENV_FILE.write_text("\n".join(lines) + "\n")
+    print(f"\nSaved to {ENV_FILE}")
+    print("Fixtures feed:", "ON" if fd else "off (bundled sample data only; use --date to replay a past day)")
+    print("Betfair prices:", "ON" if (bf_key and bf_user) else "off (model prices, no edge column)")
+    print("\nNow run:  tradescout scan")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="tradescout", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data-dir", default=str(SAMPLE_DATA_DIR), help="openfootball JSON directory")
@@ -164,6 +194,9 @@ def main(argv=None) -> int:
     r.add_argument("--date")
     r.add_argument("--top", type=int, default=40)
     r.set_defaults(func=cmd_ratings)
+
+    st = sub.add_parser("setup", help="enter your API keys once; saved to .env")
+    st.set_defaults(func=cmd_setup)
 
     rf = sub.add_parser("refresh-data", help="download season files from openfootball")
     rf.add_argument("--seasons", nargs="+", required=True)
