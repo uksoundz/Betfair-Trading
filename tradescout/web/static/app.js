@@ -505,6 +505,50 @@ function pickRow(i, k) {
     <div class="actions"><button class="small primary">Open plan ›</button>${i.decision === 'TRADE' && status.betting_mode === 'live' && status.betfair ? '<div class="s" style="margin-top:4px">placeable</div>' : ''}${i.tracked ? '<span class="s">Tracked ✓</span>' : ''}</div></div>`;
 }
 
+// Why is nothing a TRADE today? Tally the reasons across every idea so the answer is on screen, not buried in cards.
+function whyNoTrade(src) {
+  const ideas = allIdeas(src); if (!ideas.length) return null;
+  const tally = {}, bump = (k) => tally[k] = (tally[k] || 0) + 1;
+  let priced = 0, best = null;
+  for (const i of ideas) {
+    if (i.decision === 'TRADE') continue;
+    if (i.decision === 'RESEARCH') { const st = i.m.price_status; bump(st === 'no_event' ? 'fixture not matched to an exchange event' : st === 'no_markets' ? 'exchange has not priced the markets yet' : st === 'error' ? 'price feed error' : st === 'inplay' ? 'match already in play' : src.date < status.today ? 'past day: pre-match markets are gone' : 'no exchange price'); continue; }
+    priced++;
+    if (i.ev_conservative != null && (best == null || i.ev_conservative > best.ev_conservative)) best = i;
+    const txt = (i.decision_reasons || []).join(' '); let any = false;
+    if (/started|in play/i.test(txt)) { bump('match already in play'); any = true; }
+    if (/below/i.test(txt)) { bump(/plan structure costs/i.test(txt) ? 'edge below the threshold once in-play exit costs are charged' : 'edge below the threshold after commission'); any = true; }
+    if (/wider than/i.test(txt)) { bump('back/lay spread too wide (thin market)'); any = true; }
+    if (/not available/i.test(txt)) { bump('plan price not on offer right now'); any = true; }
+    if (/matched on this market/i.test(txt)) { bump('too little money matched yet (liquidity)'); any = true; }
+    if (/too old/i.test(txt)) { bump('prices too old'); any = true; }
+    if (!any) bump('other');
+  }
+  return { tally, priced, best, total: ideas.length, trades: ideas.filter(i => i.decision === 'TRADE').length };
+}
+function diagnosisText(src) {
+  const w = whyNoTrade(src) || {}; const f = src.feed || {}; const bf = src.betfair || {};
+  return [`TradeScout diagnosis · ${src.sport} · ${src.date} · generated ${src.generated}`,
+    `Betfair: ${bf.configured ? (bf.connected ? 'connected' : 'NOT connected: ' + (bf.error || '')) : 'not set up'}${bf.delayed ? ' · delayed key' : ''}`,
+    `Fixtures ${src.fixtures}, priced ${src.priced}, exchange events ${f.events_on_day ?? '-'}, matched ${f.matched ?? '-'}, unmatched ${(f.unmatched || []).length}, in play ${(f.inplay || []).length}, suspended ${(f.suspended || []).length}${f.error ? ', feed error: ' + f.error : ''}`,
+    ...(f.unmatched || []).slice(0, 10).map(u => `  unmatched: ${u.fixture} -> ${u.reason}`),
+    `Ideas ${w.total}: TRADE ${w.trades}, priced NO TRADE ${w.priced}; settings: min edge ${(status.min_edge * 100).toFixed(1)}%, max spread ${(status.max_spread * 100).toFixed(0)}%, commission ${(status.commission * 100).toFixed(1)}%, mode ${status.betting_mode}`,
+    ...Object.entries(w.tally || {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => `  ${n} x ${k}`),
+    w.best ? `Closest to a trade: ${w.best.m.home} v ${w.best.m.away} · ${w.best.strategy_label} · conservative edge ${spct(w.best.ev_conservative)} (model ${spct(w.best.ev_model)}) · market implies ${pct(w.best.p_market)} · ${(w.best.decision_reasons || []).join(' ')}` : '',
+    ...(src.skipped || []).slice(0, 5).map(x => `  error: ${x}`)].filter(Boolean).join('\n');
+}
+function whyPanel(src) {
+  const w = whyNoTrade(src); if (!w) return '';
+  const rows = Object.entries(w.tally).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<li><b>${n}</b> × ${esc(k)}</li>`).join('');
+  const threshold = `${(status.min_edge * 100).toFixed(1)}%`;
+  return `<details class="card why" ${w.trades ? '' : 'open'}><summary><b>${w.trades ? w.trades + ' TRADE' + (w.trades === 1 ? '' : 'S') + ' today.' : 'Why is nothing a TRADE today?'}</b> <span class="meta">${w.priced} ideas priced by the exchange, ${w.total - w.priced - w.trades} without a usable price. A TRADE needs a conservative net edge of at least ${threshold} after commission at a price and size actually on offer.</span></summary>
+    <div class="meta">Reasons across the priced ideas (one idea can fail for more than one reason):</div><ul style="margin:6px 0 6px 18px">${rows}</ul>
+    ${w.best ? `<div class="meta">Closest to a trade: <b>${esc(w.best.m.home)} v ${esc(w.best.m.away)}</b> · ${esc(w.best.strategy_label)} · conservative edge <b>${spct(w.best.ev_conservative)}</b> (the raw model says ${spct(w.best.ev_model)}; the market implies ${pct(w.best.p_market)}). ${esc((w.best.decision_reasons || [])[0] || '')}</div>` : ''}
+    <div class="meta" style="margin-top:6px">The model only gets a small say against the exchange (15-30% by market), so a TRADE needs a clear mispricing. You can lower the threshold in Settings > "Minimum conservative net edge", place any plan yourself with the override on its slip, or rank by conservative edge above to see the nearest misses.</div>
+    <div class="row" style="margin-top:8px"><button class="small" id="copyDiag">Copy diagnosis</button><span class="meta">copies the feed state, the counts above and your settings as text, ready to paste.</span></div>
+  </details>`;
+}
+
 function renderPicks() {
   if (!data || !data.matches.length) return;
   const mode = $('#picksMode').value, perMatch = $('#picksPerMatch').checked, sortBy = $('#picksSort').value, n = +$('#picksCount').value;
@@ -520,11 +564,12 @@ function renderPicks() {
   const trades = allIdeas(data).filter(i => i.decision === 'TRADE').length + (dataOther ? allIdeas(dataOther).filter(i => i.decision === 'TRADE').length : 0);
   const cfg = status.betfair_configured || (data.betfair && data.betfair.configured);
   let head = `<div class="meta" style="margin-bottom:10px">${data.weekday}: <b>${trades} TRADE</b> decision${trades === 1 ? '' : 's'} across ${data.fixtures}${dataOther ? ' + ' + dataOther.fixtures : ''} fixtures. ${trades === 0 ? 'NO TRADE today: no idea clears the conservative edge threshold at an available price.' : ''}${!cfg ? ' No exchange prices are connected, so nothing can be a TRADE: the list below is model research only.' : data.priced === 0 ? ' No exchange prices were attached to this day (see the price feed details at the top right), so nothing can be a TRADE.' : ''}</div>`;
-  if (!ideas.length) { $('#picks').innerHTML = head + `<div class="empty">Nothing to show in this view. ${mode === 'trade' ? 'Switch the filter to see priced NO TRADE ideas or research.' : ''}</div>`; return; }
+  if (!ideas.length) { $('#picks').innerHTML = head + whyPanel(data) + `<div class="empty">Nothing to show in this view. ${mode === 'trade' ? 'Switch the filter to see priced NO TRADE ideas or research.' : ''}</div>`; if ($('#copyDiag')) $('#copyDiag').onclick = async () => { try { await navigator.clipboard.writeText(diagnosisText(data)); toast('Diagnosis copied: paste it into a message.'); } catch (e) { toast('Copy failed: ' + e.message); } }; return; }
   const settledOnes = ideas.filter(i => i.settled);
   if (settledOnes.length) head += `<div class="result" style="margin-bottom:10px">Replay: <b>${settledOnes.reduce((a, i) => a + i.settled.hit, 0).toFixed(1)} of ${settledOnes.length}</b> shown ideas paid off (expected ${settledOnes.reduce((a, i) => a + i.calibrated_hit_prob, 0).toFixed(1)}), ${spct(settledOnes.reduce((a, i) => a + i.settled.pnl, 0) / settledOnes.length)} per unit risked on average at model prices.</div>`;
-  $('#picks').innerHTML = head + ideas.map((i, k) => pickRow(i, k)).join('');
+  $('#picks').innerHTML = head + whyPanel(data) + ideas.map((i, k) => pickRow(i, k)).join('');
   document.querySelectorAll('#picks .pick').forEach(el => el.onclick = () => { const src = el.dataset.sport === sport ? data : dataOther; showMatch(el.dataset.id, src); });
+  if ($('#copyDiag')) $('#copyDiag').onclick = async () => { try { await navigator.clipboard.writeText(diagnosisText(data)); toast('Diagnosis copied: paste it into a message.'); } catch (e) { toast('Copy failed: ' + e.message); } };
 }
 
 function renderStrategy() {
