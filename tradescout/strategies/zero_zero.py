@@ -21,7 +21,7 @@ class LayZeroZero(Strategy):
         p00 = fc.p_cs.get("0-0", 0.0)
         if p00 > 0.12:
             return None  # low-scoring game: the lay is too expensive
-        price, is_market = self.price_or_fair(prices.correct_scores.get("0-0"), p00)
+        price, is_market = self.price_or_fair(prices.correct_scores.get("0-0"), p00, "lay")
         p_goal = fc.p_goal_before[70]
         z70 = fair_price(self.cond(fc, 0, 0, EXIT_MINUTE)["cs"][0, 0])
         scenarios = [
@@ -45,7 +45,7 @@ class LayZeroZero(Strategy):
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p00 = fc.p_cs.get("0-0", 0.0)
-        price, _ = self.price_or_fair(None, p00)
+        price, _ = self.price_or_fair(None, p00, "lay")
         stop = self.net(exit_profit_lay(price, fair_price(self.cond(fc, 0, 0, EXIT_MINUTE)["cs"][0, 0])))
         win = self.net(1.0 / (price - 1))
         return self.expect(self.first_goal_scenarios(fc, result),

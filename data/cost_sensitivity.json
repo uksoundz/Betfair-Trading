@@ -1,0 +1,44 @@
+{
+ "window": [
+  "2025-08-01",
+  "2026-06-30"
+ ],
+ "evidence": "model-synthetic holdout, football",
+ "roi_by_cost": {
+  "Back Over 2.5 + 1-1 insurance": {
+   "friction 0% / commission 2%": 0.0605,
+   "friction 3% / commission 5%": 0.0496,
+   "friction 6% / commission 5%": 0.0496
+  },
+  "Back Under 2.5, trade out on 60'": {
+   "friction 0% / commission 2%": -0.0412,
+   "friction 3% / commission 5%": -0.0723,
+   "friction 6% / commission 5%": -0.0982
+  },
+  "Back-to-Lay the favourite": {
+   "friction 0% / commission 2%": -0.008,
+   "friction 3% / commission 5%": -0.0435,
+   "friction 6% / commission 5%": -0.0698
+  },
+  "Correct Score target basket": {
+   "friction 0% / commission 2%": -0.056,
+   "friction 3% / commission 5%": -0.0686,
+   "friction 6% / commission 5%": -0.0686
+  },
+  "Lay Under 2.5 (staged entry)": {
+   "friction 0% / commission 2%": 0.0821,
+   "friction 3% / commission 5%": 0.0674,
+   "friction 6% / commission 5%": 0.0674
+  },
+  "Lay the 0-0": {
+   "friction 0% / commission 2%": -0.0017,
+   "friction 3% / commission 5%": -0.0051,
+   "friction 6% / commission 5%": -0.0068
+  },
+  "Lay the Draw": {
+   "friction 0% / commission 2%": -0.0187,
+   "friction 3% / commission 5%": -0.0286,
+   "friction 6% / commission 5%": -0.0373
+  }
+ }
+}

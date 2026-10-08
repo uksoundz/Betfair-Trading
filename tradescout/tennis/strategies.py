@@ -37,6 +37,7 @@ class BackToLayFavouriteSet(Strategy):
     best_for = "A clear favourite priced 1.25 to 1.9 who wins the first set often; big servers on fast courts."
     avoid_when = "Odds-on under 1.2 (no room to shorten), evenly matched players, or a favourite returning from a layoff."
     settlement = "approximate"
+    enabled_default = False  # -6% per unit at model prices in both 2024 and 2025 (profit factor 0.69): exits cost more than the set-one signal is worth
 
     def evaluate(self, fc: TennisForecast, prices: MarketPrices) -> StrategyResult | None:
         mkt, fav_home = _fav_prices(fc, prices)
@@ -93,7 +94,7 @@ class LayFavouriteEarlyBreak(Strategy):
     def evaluate(self, fc: TennisForecast, prices: MarketPrices) -> StrategyResult | None:
         mkt, fav_home = _fav_prices(fc, prices)
         p_fav = fc.p_fav
-        price, is_market = self.price_or_fair(mkt, p_fav)
+        price, is_market = self.price_or_fair(mkt, p_fav, "lay")
         if price < 1.12 or price > 1.55:
             return None
         pb_a, pb_b = fc.p_first_break_a, fc.p_first_break_b
@@ -129,7 +130,7 @@ class LayFavouriteEarlyBreak(Strategy):
         """Who broke first is not in the results, so settle as an expectation: the first-set winner
         is far more likely to have broken first. P(dog broke first | dog won set 1) is taken from the
         model's first-break and set probabilities."""
-        price, _ = self.price_or_fair(None, fc.p_fav)
+        price, _ = self.price_or_fair(None, fc.p_fav, "lay")
         fav_home = fc.p_a >= 0.5
         _, fav_set1, _ = _settle_sets(fc, result)
         p_dog_first = fc.p_first_break_b if fav_home else fc.p_first_break_a

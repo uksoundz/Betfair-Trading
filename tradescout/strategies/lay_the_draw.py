@@ -18,7 +18,7 @@ class LayTheDraw(Strategy):
     settlement = "approximate"
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
-        price, is_market = self.price_or_fair(prices.draw, fc.p_draw)
+        price, is_market = self.price_or_fair(prices.draw, fc.p_draw, "lay")
         if price < 2.6:
             return None  # too short: the collapse on a late 0-0 outweighs the green
         scenarios: list[Scenario] = []
@@ -58,7 +58,7 @@ class LayTheDraw(Strategy):
                               orders=[OrderLeg("MATCH_ODDS", "draw", "lay", round(price, 2), 1.0, "liability", "lay the draw pre-match", p_model=fc.p_draw)])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
-        price, _ = self.price_or_fair(None, fc.p_draw)
+        price, _ = self.price_or_fair(None, fc.p_draw, "lay")
         fav_home = fc.favourite == "home"
         stop = self.net(exit_profit_lay(price, fair_price(self.cond(fc, 0, 0, EXIT_MINUTE)["draw"])))
 

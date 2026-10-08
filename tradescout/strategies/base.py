@@ -137,13 +137,16 @@ class Strategy:
 
     # ----- helpers shared by concrete strategies -------------------------------------------
     @staticmethod
-    def price_or_fair(market_price: Optional[float], p: float) -> tuple[float, bool]:
-        """Use the exchange price when we have it, else the model's fair price shaded by a
-        typical exchange overround. Returns (price, is_market)."""
+    def price_or_fair(market_price: Optional[float], p: float, side: str = "back") -> tuple[float, bool]:
+        """Use the exchange price when we have it, else the model's fair price shaded *against* the
+        trader by a typical exchange overround: a back gets a shorter price than fair, a lay a longer
+        one. (An earlier version shaded lays in the layer's favour, which flattered every lay
+        strategy in the synthetic backtests by about 3%.) Returns (price, is_market)."""
         if market_price and market_price > 1.0:
             return float(market_price), True
         fair = 1.0 / max(p, 1e-6)
-        return float(max(1.01, fair / DEFAULT_OVERROUND)), False
+        shaded = fair / DEFAULT_OVERROUND if side == "back" else fair * DEFAULT_OVERROUND
+        return float(max(1.01, shaded)), False
 
     @staticmethod
     def edge_back(p_model: float, price: float) -> float:

@@ -102,9 +102,16 @@ function renderDayStrip(startIso) {
   document.querySelectorAll('.day').forEach(el => el.onclick = () => { $('#date').value = el.dataset.d; autoJumped = true; scan(); });
 }
 
+async function stripStart() {
+  // replaying the past: centre the strip on the chosen day so neighbouring days are reachable
+  const d = $('#date').value;
+  return d < status.today ? isoShift(d, -3) : status.today;
+}
+
 async function scan(refresh = false) {
   const d = $('#date').value; if (!d) return;
-  renderDayStrip(status.today);
+  const start = await stripStart();
+  if (start !== status.today && !calendar[d] && !calendar[isoShift(d, 1)]) { await loadCalendar(start); } else { renderDayStrip(start); }
   $('#banner').innerHTML = ''; $('#matchList').innerHTML = '<div class="spinner">Scanning ' + d + '…</div>'; $('#detail').innerHTML = ''; $('#picks').innerHTML = '<div class="spinner">Scanning…</div>';
   try { data = await api(`/api/scan?date=${d}&sport=${sport}${refresh ? '&refresh=true' : ''}`); selected = null; dataOther = null; }
   catch (e) {

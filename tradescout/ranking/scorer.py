@@ -30,7 +30,7 @@ from ..config import DEFAULT_LIQUIDITY, LEAGUE_LIQUIDITY, settings
 from ..models import Fixture, MarketPrices, TradeIdea
 from ..risk import Exposure, RiskLimits, advise_stake
 from ..strategies.base import Strategy, StrategyResult
-from ..value import ValueAssessment, assess
+from ..value import ValueAssessment, assess, net_ev
 from .calibration import Calibration
 
 SHRINK_N = 150.0
@@ -91,11 +91,21 @@ class Scorer:
             # stake-weighted entry edge across legs (fractions sum to 1 within a sizing type)
             ev_cons = float(sum(o.fraction * l.ev_conservative for o, l in zip(orders, legs)))
             ev_model = float(sum(o.fraction * l.ev_model for o, l in zip(orders, legs)))
+            # structural cost or benefit of the plan beyond simply holding the entry bet: the model's
+            # plan return at its own shaded prices (exits, friction, commission included) minus the
+            # return of holding the same entry to settlement. In-play plans pay exit friction twice
+            # over, so this is usually negative and a TRADE must clear it.
+            ev_hold = float(sum(o.fraction * net_ev(o.p_model, o.price, o.side, settings.commission) for o in orders))
+            plan_adjust = float(r.expected_roi - ev_hold) if strategy.inplay else 0.0
+            ev_cons += plan_adjust
+            ev_model += plan_adjust
             p_cons = legs[0].p_conservative
             p_mkt = legs[0].p_market
             execution = float(min(l.execution for l in legs))
             decision = "TRADE" if (all(l.decision == "TRADE" for l in legs) and ev_cons >= settings.min_edge) else "NO TRADE"
             reasons = [x for l in legs for x in l.reasons]
+            if strategy.inplay and abs(plan_adjust) > 0.002:
+                reasons.append(f"In-play plan structure {'costs' if plan_adjust < 0 else 'adds'} {abs(plan_adjust):.1%} per unit versus holding the entry bet (modelled exits, friction, commission).")
             if decision == "NO TRADE" and ev_cons < settings.min_edge and not any("below" in x for x in reasons):
                 reasons.append(f"Combined conservative net edge {ev_cons:+.1%} is below the {settings.min_edge:.0%} threshold.")
             evidence = "exchange-priced-static" if strategy.key in STATIC_STRATEGIES else "simulated-inplay"
@@ -118,7 +128,15 @@ class Scorer:
         # ---- stake from the risk engine (conservative probability where we have one)
         liability_per_unit = legs[0].liability_per_unit if legs else 1.0
         if decision == "TRADE":
-            advice = advise_stake(p_cons, win, loss, liability_per_unit, bank, self.limits, exposure, strategy.key, sport)
+            # Kelly on the entry bet itself at the conservative probability: back wins (price-1)(1-c)
+            # per unit staked, a lay wins (1-c)/(price-1) per unit of liability; both lose 1 unit.
+            leg0, order0 = legs[0], orders[0]
+            px = leg0.price or order0.price
+            if order0.side == "back":
+                k_win, k_loss, k_p = (px - 1) * (1 - settings.commission), -1.0, p_cons
+            else:
+                k_win, k_loss, k_p = (1 - settings.commission) / (px - 1), -1.0, 1 - p_cons
+            advice = advise_stake(k_p, k_win, k_loss, 1.0, bank, self.limits, exposure, strategy.key, sport)
         else:
             from ..risk import StakeAdvice
             advice = StakeAdvice(0.0, 0.0, 0.0, 0.0, [], True,

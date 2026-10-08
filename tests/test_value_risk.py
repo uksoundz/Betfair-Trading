@@ -42,6 +42,20 @@ def test_assess_decisions():
     # no quote: research only
     e = assess(0.48, "back", None, 2.40, 20.0, "MATCH_ODDS", 1.0, 0.05, 0.02, 0.04)
     assert e.decision == "RESEARCH" and e.execution == 0.0
+    # stale snapshot: flagged, then blocked
+    from datetime import datetime, timedelta, timezone
+    old = Quote(back=[(2.40, 500.0)], lay=[(2.44, 500.0)], total_matched=50000,
+                as_of=(datetime.now(timezone.utc) - timedelta(minutes=7)).isoformat())
+    f = assess(0.55, "back", old, 2.40, 20.0, "MATCH_ODDS", 1.0, 0.05, 0.02, 0.04)
+    assert f.decision == "TRADE" and any("minutes old" in r for r in f.reasons) and f.execution < a.execution
+    older = Quote(back=[(2.40, 500.0)], lay=[(2.44, 500.0)], total_matched=50000,
+                  as_of=(datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat())
+    g = assess(0.55, "back", older, 2.40, 20.0, "MATCH_ODDS", 1.0, 0.05, 0.02, 0.04)
+    assert g.decision == "NO TRADE"
+    # partial fill: only part of the size is available at the plan price
+    thin = Quote(back=[(2.40, 8.0)], lay=[(2.44, 500.0)], total_matched=50000)
+    h = assess(0.55, "back", thin, 2.40, 20.0, "MATCH_ODDS", 1.0, 0.05, 0.02, 0.04)
+    assert h.fill_fraction == pytest.approx(0.4) and any("partial" in r for r in h.reasons)
 
 
 def test_kelly_and_stake_caps():

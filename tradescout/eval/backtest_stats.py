@@ -63,7 +63,9 @@ def compute(pnls: Sequence[float], hits: Sequence[float], predicted: Sequence[fl
     rng = np.random.default_rng(seed)
     boots = [p[rng.integers(0, n, n)].mean() for _ in range(1000)] if n >= 10 else [p.mean()]
     pf = float(wins.sum() / abs(losses.sum())) if losses.sum() < 0 else float("inf")
-    return TradeStats(n, float(np.mean(np.asarray(hits) >= 0.5)) if len(hits) else 0.0, float(np.mean(predicted)) if len(predicted) else 0.0,
+    # strike = mean hit probability: exact 0/1 where the outcome is observed, an expectation where the
+    # event timing is inferred (never rounded, so a 62% expected hit is not counted as a win)
+    return TradeStats(n, float(np.mean(hits)) if len(hits) else 0.0, float(np.mean(predicted)) if len(predicted) else 0.0,
                       float(wins.mean()) if len(wins) else 0.0, float(losses.mean()) if len(losses) else 0.0, float(p.mean()),
                       min(pf, 99.0), float(dd.max()), longest, float(p.std()), float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5)), evidence)
 

@@ -80,7 +80,7 @@ class LayUndersStaged(Strategy):
         p_under = 1 - fc.p_over[2.5]
         if p_under > 0.58:
             return None
-        u0, is_market = self.price_or_fair(prices.under_25, p_under)
+        u0, is_market = self.price_or_fair(prices.under_25, p_under, "lay")
         u15 = fair_price(self.cond(fc, 0, 0, 15)["under_25"])
         # Scenario tree: goal before 15' (second tranche never placed; first tranche greens or settles),
         # 0-0 at 15' then outcome over/under on the full position.
@@ -117,7 +117,7 @@ class LayUndersStaged(Strategy):
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p_under = 1 - fc.p_over[2.5]
-        u0, _ = self.price_or_fair(None, p_under)
+        u0, _ = self.price_or_fair(None, p_under, "lay")
         u15 = fair_price(self.cond(fc, 0, 0, 15)["under_25"])
         over = result.total_goals >= 3
         ht_goals = (result.ht_home or 0) + (result.ht_away or 0)

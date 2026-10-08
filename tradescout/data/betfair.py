@@ -157,6 +157,9 @@ class BetfairPrices:
             book = by_id.get(cat["marketId"])
             if not book:
                 continue
+            if book.get("status") not in (None, "OPEN") or book.get("inplay"):
+                # suspended / closed / already in play: never price a pre-match plan off it
+                continue
             mtype = cat["description"]["marketType"]
             runners = {r["selectionId"]: r for r in cat["runners"]}
             if mtype == "MATCH_ODDS":

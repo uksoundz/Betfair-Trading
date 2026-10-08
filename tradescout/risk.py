@@ -109,6 +109,9 @@ def advise_stake(p_cons: float, win_return: float, loss_return: float, liability
     if exposure.realised_week <= -limits.weekly_loss_limit * bank:
         return StakeAdvice(0.0, 0.0, 0.0, 0.0, ["weekly loss limit"], True, f"Weekly loss limit reached ({limits.weekly_loss_limit:.0%} of bank). No new trades this week.")
     f_full = kelly_fraction(p_cons, win_return, loss_return)
+    if f_full <= 0:
+        return StakeAdvice(0.0, 0.0, 0.0, 0.0, ["no positive expectation"], True,
+                           "No stake: no positive expectation at the conservative probability.")
     f = f_full * limits.kelly_fraction
     if exposure.drawdown > limits.drawdown_halve:
         f *= 0.5

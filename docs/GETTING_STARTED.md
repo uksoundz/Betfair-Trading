@@ -1,49 +1,11 @@
 # Getting started, step by step
 
 You do not need to know any programming. There are three stages. Stage 1 works with nothing but
-the code. Stages 2 and 3 are optional upgrades you can do later.
+the code. Stage 2 adds live football fixtures (free). Stage 3 connects Betfair, which is the only
+way the app can ever call something a **TRADE**: without exchange prices every idea is marked
+**RESEARCH** and no stake is suggested.
 
 ---
-
-## The app
-
-Once installed, double-click **`app.bat`** (or type `tradescout app`). Your browser opens on
-TradeScout. Keep the black window open while you use it.
-
-* **Top picks** is the home screen: the day's ranked shortlist, with a star rating, how often the
-  plan pays off, the return, the stake in pounds and the first instruction. Click one to open it.
-* **Day strip**: the next ten days with the number of games on each. Click a day. The calendar
-  box takes any date, past or future. If today is blank the app jumps to the next match day.
-* **Matches**: every fixture. Click one for the model's view in plain English, then every strategy
-  that fits with a colour-coded plan: Before kick-off, In play, Get out, Stop loss, and Why, plus a
-  table of every way the match can go.
-* **By strategy**: pick a strategy and see which matches suit it today, with when to use it and
-  when to avoid it.
-* **My picks**: press **+ Track this pick** on any plan and it is logged. Press **Update results**
-  and tracked picks settle themselves against the real scores. This is your paper-trading record.
-* **Settings**: paste your football-data.org key (free) for live fixtures, and later your Betfair
-  details for real prices. Each has a **Test** button. Set your bank and staking style here too.
-* **Bet slip**: on any plan press **Bet slip**. It lists every pre-match selection with the
-  market, side, plan price, the best price available on Betfair right now (✓ if the plan price is
-  there), the size to enter and what is at risk. Change the stake and recalculate. With Betfair
-  connected, **Open in Betfair** takes you straight to each market: click the price for the
-  selection shown, type the size, press Place bets. Betfair does not allow outside apps to
-  pre-fill its betslip, so with betting mode Off or Paper that final click is yours.
-  **Record as paper bet** logs the slip in My picks; **Copy slip** puts it on the clipboard.
-* **Live betting** (Settings > Betting > Live): the slip gains a red **Place bets on Betfair**
-  button. Pressing it shows every order and the total at risk; pressing **Yes, place the bets**
-  sends them as limit orders at the plan price. Unmatched orders lapse at kick-off. A daily cap
-  (default £50 at risk) blocks anything over the limit. Placed bets appear in My picks marked
-  LIVE, and **Open orders on Betfair** at the bottom of My picks lets you cancel the unmatched part.
-  Only the pre-match legs are placed; the in-play exits and stops remain yours to do.
-* **Past dates** show the real result and whether each plan paid off.
-
-### Set up in the app (instead of setup.bat)
-
-1. Register at https://www.football-data.org/client/register and copy the code from their email.
-2. In the app go to **Settings**, paste it under *Fixtures feed*, press **Save**, then **Test connection**.
-3. Later, for real prices: create a Betfair Application Key (see Settings for the link), enter it
-   with your Betfair username and password, **Save**, then **Test login**.
 
 ## Stage 1: run it on the built-in data (10 minutes)
 
@@ -53,209 +15,121 @@ TradeScout. Keep the black window open while you use it.
 2. Open the unzipped folder. Double-click **`install.bat`**. A black window appears, installs
    Python if it is missing, then installs TradeScout. Wait for "Done", press any key.
    * If Windows shows "Windows protected your PC", click **More info**, then **Run anyway**.
-     The files are plain text; right-click, Edit to read them.
-3. Double-click **`app.bat`**. The app opens in your browser. Pick 8 November 2025 in the date
-   box and press Scan this day to see a full Saturday with results.
-4. Later: double-click **`setup.bat`** to enter your keys (Stage 2). After that `app.bat` scans
-   real fixtures for any date you pick.
+3. Double-click **`app.bat`**. The app opens in your browser. Keep the black window open while you use it.
+4. In the app, pick **Football** or **Tennis** at the top, then a date. Past dates show what
+   really happened; the model is always fitted using only matches before that day.
 
-If you prefer typing commands, or you are on a Mac, carry on below.
+### Mac, or if you prefer typing
 
-### Step 1. Install Python
+Install Python from python.org, open Terminal in the folder, then:
 
-Python is the program that runs TradeScout.
-
-* **Windows:** go to https://www.python.org/downloads/ and click the big yellow "Download Python"
-  button. Run the installer. **Tick the box that says "Add python.exe to PATH"** before clicking
-  Install. This matters.
-  * Newer Windows machines come with a "Python install manager" (the `py` command) but no
-    Python. In that case type `py install 3` in a command window first.
-* **Mac:** go to https://www.python.org/downloads/ and download the macOS installer. Run it.
-
-### Step 2. Download the code
-
-On the GitHub page for this repository click the green **Code** button, then **Download ZIP**.
-Unzip it. You now have a folder called something like `Betfair-Trading`. Remember where it is,
-for example `Documents\Betfair Trading\Betfair-Trading`.
-
-### Step 3. Open a command window in that folder
-
-* **Windows:** open the folder in File Explorer, click in the address bar at the top, type `cmd`
-  and press Enter. A black window opens.
-* **Mac:** open Terminal (press Cmd+Space, type Terminal, press Enter). Type `cd ` with a space
-  after it, drag the folder from Finder into the Terminal window, press Enter.
-
-Everything below is typed into that window, one line at a time, pressing Enter after each.
-
-### Step 4. Install TradeScout
-
-Windows:
-```
-py -m pip install -e .
-```
-Mac:
 ```
 python3 -m pip install -e .
+tradescout app
 ```
-
-**The dot at the end matters.** It means "install the code in this folder". Wait for it to
-finish (a minute or so).
-
-If Windows says `'pip' is not recognized`, always use `py -m pip ...` instead of `pip ...`.
-If `tradescout` is not recognised afterwards, use `py -m tradescout.cli` in place of
-`tradescout` in every command below, or just use the `.bat` files.
-
-### Step 5. Try it
-
-Replay a Saturday from last season and see how the picks did:
-
-```
-tradescout scan --date 2025-11-08 --show-results
-```
-
-You should see a ranked table of trade ideas, and under it each idea with the real score and
-whether it paid off.
-
-Other things to try:
-
-```
-tradescout scan --date 2025-11-08 --html today.html
-```
-makes a web page called `today.html` in the folder. Double-click it to open it in your browser.
-Click any row to expand the full trading plan.
-
-```
-tradescout match "Chelsea FC" "Wolverhampton Wanderers FC" --date 2025-11-08
-```
-shows everything about one match.
-
-Team names must match the spelling in the data (`Arsenal FC`, `Manchester United FC`,
-`FC Bayern München`). If unsure, run a scan for that date first and copy the name from the table.
-
-That is Stage 1 done. Everything so far uses the match results stored inside the folder, which
-run up to the end of the 2025-26 season.
 
 ---
 
-## Stage 2: today's real fixtures (5 minutes, free)
+## The app, screen by screen
 
-To scan today's matches the tool needs a fixture list from the internet. A free account at
-football-data.org provides it.
-
-### Step 1. Get the free key
-
-1. Go to https://www.football-data.org/client/register
-2. Enter your name and email, click Register.
-3. Check your email. The message contains a long code of letters and numbers. That is your
-   **API key**. It is just a password that identifies you to their website.
-
-### Step 2. Give the key to TradeScout
-
-In the command window type:
-
-```
-tradescout setup
-```
-
-It asks for the football-data.org key: paste it and press Enter. Press Enter to skip the Betfair
-questions for now. Enter your bank size (how much money you trade with) or press Enter for 1000.
-
-That saves a small text file called `.env` in the folder. You only do this once.
-
-### Step 3. Scan today
-
-```
-tradescout scan
-```
-
-Now it lists today's real fixtures from the Premier League, Championship, Bundesliga, La Liga,
-Serie A, Ligue 1, Eredivisie, Primeira Liga and Champions League, with ranked trade ideas.
-
-Tips:
-
-* `tradescout scan --per-match` shows only the best idea for each match.
-* `tradescout scan --sort hit` puts the ideas most likely to pay off at the top instead of the
-  best expected value.
-* `tradescout scan --html today.html` for the clickable web page.
-* The free tier allows 10 requests a minute. One scan uses one or two, so this is plenty.
-
-### Step 4. Keeping the ratings fresh
-
-The team ratings are learned from past results. `tradescout scan` downloads this season's latest
-results automatically once a day. To force it: `tradescout refresh-data`
+* **Football | Tennis** switch at the top. Each sport has its own fixtures, model, strategies,
+  Betfair markets and statistics.
+* **Day strip and calendar.** Click any day. If today is blank the app jumps to the next day with
+  matches.
+* **Opportunities.** The ranked list. Every idea carries a decision:
+  * **TRADE**: the conservative net edge after commission clears your threshold at a price and
+    size the exchange is actually offering. A stake is suggested.
+  * **NO TRADE**: the exchange prices it, but there is no proven advantage. No stake.
+  * **RESEARCH**: no exchange price. The model's view is shown, nothing can be called value.
+  Most days have few or no TRADEs. That is correct behaviour, not a fault. Use the filter to
+  show TRADE only, priced ideas, or everything. Tick **both sports** to rank football and
+  tennis together.
+* **Matches.** Every fixture. Click one for the model's view in plain English and every strategy
+  that fits, each with: the market, back or lay, the entry price and the maximum or minimum
+  acceptable price, stake and maximum loss, why the model sees value, what must happen, when to
+  get out, what to do if it goes wrong, how reliable it is (confidence, evidence, history), and
+  when the prices were last seen.
+* **By strategy.** Which matches suit one strategy today, when to use it and when to avoid it,
+  and its out-of-sample record.
+* **My picks.** Track any plan, or record a bet slip. Press **Update results** and picks settle
+  against the real scores. Plans with in-play exits are settled at *modelled* exit prices and say so.
+* **Performance.** Out-of-sample statistics for every strategy (trades, strike rate vs predicted,
+  return per unit, confidence interval, profit factor, drawdown, losing run) with the evidence
+  class stated, plus what the signals log has recorded so far.
+* **Bankroll.** Open risk, realised profit and loss today and this week, drawdown, the risk
+  limits in force, and a risk-of-ruin check.
+* **Settings.** Keys, bank, staking style, commission rate, value threshold, betting mode, and
+  which strategies are switched on.
 
 ---
 
-## Stage 3: real Betfair prices (optional)
+## Stage 2: live football fixtures (5 minutes, free)
 
-Without this the tool shows the prices it *thinks* are fair. With it, the tool compares its own
-numbers against the actual exchange prices and the Edge column fills in. Edge is where the money
-is, so this is worth doing once you are comfortable.
+1. Go to https://www.football-data.org/client/register and enter your name and email.
+2. They email you a long code. That code is an "API key": a password that proves to their
+   website it is you.
+3. In the app, open **Settings**, paste the code under *Fixtures feed*, press **Save**, then
+   **Test connection**.
 
-### Step 1. Get a Betfair Application Key
-
-1. You need a normal Betfair account, logged in and funded.
-2. Go to https://developer.betfair.com/get-started/ and follow "Get an Application Key".
-   In short: visit the Accounts API demo page linked there, log in, and press "createDeveloperAppKeys".
-3. You get two keys. The **Delayed** one is free and fine for TradeScout. (The "Live" key costs a
-   one-off activation fee and gives prices with no delay. Not needed to start.)
-
-### Step 2. Tell TradeScout
-
-```
-tradescout setup
-```
-
-Enter the football-data.org key again (or press Enter to keep skipping), then the Betfair
-application key, your Betfair username and password. These are saved only in the `.env` file on
-your own computer. Never send that file to anyone.
-
-### Step 3. Scan
-
-```
-tradescout scan
-```
-
-The table now shows real prices, the Edge column, and a note of how much money is matched in
-each market. Ideas with positive edge in liquid markets rise to the top.
+From then on, with Football selected, **Today** shows real fixtures from nine competitions and
+results download automatically for the ratings.
 
 ---
 
-## Reading the table
+## Stage 3: Betfair (needed for TRADE decisions, both sports)
 
-| Column | Meaning |
-|---|---|
-| Score | 0 to 100. 50 is break-even. Higher is better. Green at 60+. |
-| Strategy | The trade. Each one has a step-by-step plan underneath (use `--html` or `match` to read it). |
-| Hit% | How often the model thinks this plan ends in profit. |
-| Cal% | Same, after adjusting for how this strategy has actually performed in this league historically. |
-| Price | The entry price to look for. |
-| Edge | Model probability minus what the market price implies. Positive is good. Blank without Betfair. |
-| ROI | Expected profit per £1 risked. |
-| Stake% | Suggested stake as a percentage of your bank. Deliberately small. |
-| Conf | How much data sits behind both teams. Below 0.5 means be careful. |
+1. You need a funded Betfair account.
+2. Follow https://developer.betfair.com/get-started/ to create an **Application Key**. The free
+   **Delayed** key is enough to start (prices a minute or so old). The Live key costs a one-off fee
+   and is better once you trust the system.
+3. In the app, **Settings** > *Betfair*: enter the application key, your Betfair username and
+   password. Press **Save**, then **Test login**. These are stored only in a file called `.env`
+   inside the app folder on your computer. Never share that file.
 
-## Rules of thumb
+With Betfair connected:
 
-* Start by paper trading: write down the top three each day and check the results. The
-  `--show-results` replay lets you do this on past dates in seconds.
-* Prefer high Score **and** high Conf in a big league. A great number on a promoted team with
-  six games of data is not a great number.
-* The plan tells you what to do when a goal goes in and when to stop out. Decide that before kick-off.
-* Nothing here is a tip. It is a ranked research sheet. The in-play decisions are still yours.
+* Tennis fixtures come from Betfair's own ATP event list; football prices attach to each fixture.
+* Each idea's **Value check** shows the model probability, the market-implied probability, the
+  probability actually used (pulled towards the market), the live price, spread, how much of your
+  size is available, and the net expected value after commission.
+* Set **Commission** to the rate you actually pay (5% is the Betfair UK base rate; many accounts
+  pay less).
+
+---
+
+## Betting modes (Settings > Betting)
+
+* **Off**: review and copy only.
+* **Paper**: the bet slip records what you would have placed, with the prices seen, in My picks.
+  Run this for several weeks first.
+* **Live**: the bet slip gains a red **Place bets on Betfair** button for ideas marked TRADE. You
+  see every order and the total at risk, then confirm. Orders are limit orders at the plan price
+  and lapse at the start if unmatched. A daily cap, per-trade and exposure caps, daily and weekly
+  loss limits all apply. Only the pre-match legs are placed; the in-play exits and stops are yours.
+
+---
+
+## Which accounts you need
+
+| Account | Cost | Needed for |
+|---|---|---|
+| football-data.org | free | live football fixtures and results |
+| Betfair account + application key | free (Delayed) / one-off fee (Live) | exchange prices, TRADE decisions, live tennis fixtures, placing bets |
+| Nothing else | | the bundled results, models, backtests and replay all work offline |
+
+Optional, not integrated: a licensed tennis data feed for commercial use (the bundled ATP results
+are a research mirror), and expected-goals data for football (not available free in a form that can
+be bundled).
+
+---
 
 ## If something goes wrong
 
-* `'pip' is not recognized`: type `py -m pip install -e .` (Windows) or
-  `python3 -m pip install -e .` (Mac). Do not forget the dot.
-* `py install -e` shows a long help page: that is the Python *install manager*, not pip. You
-  typed `py install` instead of `py -m pip install`. Run `py install 3` once to get Python, then
-  `py -m pip install -e .`
-* `tradescout is not recognized`: close the command window and open a new one in the folder, or
-  run `py -m tradescout.cli scan` instead of `tradescout scan`, or use the `.bat` files.
-* `No matches in the covered leagues on ...`: there are simply no games today in the leagues
-  covered (international breaks are the usual reason: early September, early October, mid
-  November, late March). The tool lists the next match days; copy the suggested command.
-* `401` or `403` from football-data.org: the key was pasted wrongly. Run `tradescout setup` again.
-* Betfair login failed: check username/password, and that your account is not set to require
-  two-factor on API login.
+* `'pip' is not recognized`: use `py -m pip install -e .` (Windows). Do not forget the dot.
+* `No matches in the covered competitions on ...`: a blank day (international break, or tennis
+  replay data ending in January 2026 without Betfair). Pick another day from the strip.
+* `football-data.org limit reached`: the free plan allows 10 requests a minute. Wait a minute.
+* `Betfair login failed`: check the key, username and password, and that the account is not
+  locked. The Test login button shows the exact message.
+* Every idea is RESEARCH: Betfair is not connected, or its prices could not be fetched for that
+  fixture. Check the pill at the top right.

@@ -183,6 +183,8 @@ class BetfairTennis:
             book = by_id.get(cat["marketId"])
             if not book:
                 continue
+            if book.get("status") not in (None, "OPEN") or book.get("inplay"):
+                continue  # suspended, closed or in play: not a pre-match price
             mtype = cat["_type"]
             runners = {r["selectionId"]: r for r in cat["runners"]}
             if mtype == "MATCH_ODDS":

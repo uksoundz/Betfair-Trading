@@ -22,6 +22,8 @@ from typing import Optional
 # a ranking baseline, while exchange prices are known to be sharp. They are deliberately small and
 # are exposed in settings so they can be raised once the signals log shows the model beating the
 # market on a sample.
+STALE_AFTER_SECONDS = 300      # flag and penalise execution
+STALE_BLOCK_SECONDS = 900      # a signal older than this is never a TRADE
 MODEL_WEIGHT = {"MATCH_ODDS": 0.30, "OVER_UNDER_25": 0.15, "OVER_UNDER_15": 0.15, "CORRECT_SCORE": 0.25,
                 "BOTH_TEAMS_TO_SCORE": 0.15, "SET_BETTING": 0.25, "TOTAL_GAMES": 0.15, "DEFAULT": 0.2}
 
@@ -60,6 +62,19 @@ class Quote:
     def spread(self) -> Optional[float]:
         b, l = self.best_back, self.best_lay
         return (l - b) / b if (b and l) else None
+
+    def age_seconds(self, now=None) -> Optional[float]:
+        if not self.as_of:
+            return None
+        from datetime import datetime, timezone
+        try:
+            ts = datetime.fromisoformat(self.as_of.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        now = now or datetime.now(timezone.utc)
+        return max(0.0, (now - ts).total_seconds())
 
 
 @dataclass
@@ -163,6 +178,13 @@ def assess(p_model: float, side: str, quote: Optional[Quote], limit_price: Optio
         reasons.append(f"Only £{(quote.total_matched or 0):,.0f} matched on this market so far: liquidity is thin.")
         if ev_cons < min_edge * 2:
             decision = "NO TRADE"
+    age = quote.age_seconds()
+    if age is not None and age > STALE_AFTER_SECONDS:
+        reasons.append(f"Prices are {age / 60:.0f} minutes old: refresh before acting.")
+        execution *= 0.7
+        if age > STALE_BLOCK_SECONDS:
+            decision = "NO TRADE"
+            reasons.append("Price snapshot too old to act on; the signal is invalid until refreshed.")
     if fill.fraction == 0 and decision == "TRADE":
         reasons.append("Value exists only if the market comes to the plan price; place as a limit order and let it lapse.")
     if decision == "TRADE" and not reasons:
