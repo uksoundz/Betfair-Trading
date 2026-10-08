@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeScout {{ scan.date }}</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --text:#e2e8f0; --muted:#94a3b8; --good:#22c55e; --mid:#eab308; --line:#334155; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f8fafc; --card:#ffffff; --text:#0f172a; --muted:#475569; --line:#e2e8f0; } }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, sans-serif; }
+  h1 { font-size:20px; margin:0 0 4px; } .sub { color:var(--muted); margin-bottom:16px; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border-radius:8px; overflow:hidden; }
+  th, td { padding:8px 10px; text-align:left; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; cursor:pointer; user-select:none; } td.num, th.num { text-align:right; }
+  .score { font-weight:700; } .s60 { color:var(--good); } .s50 { color:var(--mid); }
+  details { background:var(--card); border-radius:8px; padding:10px 14px; margin:10px 0; }
+  summary { cursor:pointer; font-weight:600; } .plan li { margin:3px 0; } .warn { color:var(--mid); }
+  .meta { color:var(--muted); font-size:13px; } .wrap { overflow-x:auto; }
+</style>
+</head>
+<body>
+<h1>TradeScout &mdash; {{ scan.date.strftime('%A %d %B %Y') }}</h1>
+<div class="sub">{{ scan.fixtures|length }} fixtures &middot; {{ scan.ideas|length }} ideas &middot; model fitted on {{ scan.model_matches }} matches &middot; prices: {{ scan.price_source }}</div>
+
+<div class="wrap">
+<table id="rank">
+<thead><tr>
+<th class="num">#</th><th class="num">Score</th><th>Match</th><th>League</th><th>KO</th><th>Strategy</th>
+<th class="num">Hit</th><th class="num">Calibrated</th><th class="num">Price</th><th class="num">Edge</th><th class="num">Exp. ROI</th><th class="num">Stake %</th><th class="num">Conf</th>
+</tr></thead>
+<tbody>
+{% for i in ideas %}
+<tr>
+<td class="num">{{ loop.index }}</td>
+<td class="num score {% if i.score >= 60 %}s60{% elif i.score >= 50 %}s50{% endif %}">{{ '%.0f'|format(i.score) }}</td>
+<td><a href="#m{{ loop.index0 }}" style="color:inherit">{{ i.fixture.label }}</a></td>
+<td>{{ league_names.get(i.fixture.league, i.fixture.league) }}</td>
+<td>{{ i.fixture.kickoff.strftime('%H:%M') if i.fixture.kickoff else '-' }}</td>
+<td>{{ i.strategy_label }}</td>
+<td class="num">{{ i.hit_prob|pct }}</td><td class="num">{{ i.calibrated_hit_prob|pct }}</td>
+<td class="num">{{ (i.market_price or i.model_price)|price }}</td><td class="num">{{ i.edge|spct }}</td>
+<td class="num">{{ i.expected_roi|spct }}</td><td class="num">{{ '%.1f'|format(i.stake_pct) }}</td><td class="num">{{ '%.2f'|format(i.confidence) }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+
+<h2 style="font-size:17px;margin-top:24px">Trade plans</h2>
+{% for i in ideas %}
+{% set fc = scan.forecasts[i.fixture.label] %}
+<details id="m{{ loop.index0 }}">
+<summary>{{ '%.0f'|format(i.score) }} &middot; {{ i.fixture.label }} &middot; {{ i.strategy_label }}</summary>
+<div class="meta">xG {{ '%.2f'|format(fc.home_xg) }} - {{ '%.2f'|format(fc.away_xg) }} &middot; H/D/A {{ fc.p_home|pct }}/{{ fc.p_draw|pct }}/{{ fc.p_away|pct }} &middot; O2.5 {{ fc.p_over[2.5]|pct }} &middot; BTTS {{ fc.p_btts|pct }} &middot; goal before 70' {{ fc.p_goal_before[70]|pct }} &middot; favourite scores first {{ fc.p_fav_scores_first|pct }}</div>
+<div class="meta">Hit {{ i.hit_prob|pct }} (calibrated {{ i.calibrated_hit_prob|pct }}) &middot; win {{ i.win_return|spct }} / loss {{ i.loss_return|spct }} per unit risked &middot; expected ROI {{ i.expected_roi|spct }} &middot; stake {{ '%.1f'|format(i.stake_pct) }}% of bank{% if i.historical_strike_rate is not none %} &middot; history {{ i.historical_strike_rate|pct }} over {{ i.historical_sample }} trades{% endif %}</div>
+<ul class="plan">{% for p in i.plan %}<li>{{ p }}</li>{% endfor %}</ul>
+<ul class="meta">{% for r in i.rationale %}<li>{{ r }}</li>{% endfor %}</ul>
+{% for w in i.warnings %}<div class="warn">! {{ w }}</div>{% endfor %}
+</details>
+{% endfor %}
+
+<script>
+document.querySelectorAll('#rank th').forEach((th, idx) => th.addEventListener('click', () => {
+  const tb = th.closest('table').tBodies[0]; const rows = [...tb.rows];
+  const num = th.classList.contains('num'); const asc = th.dataset.asc !== 'true'; th.dataset.asc = asc;
+  rows.sort((a, b) => { let x = a.cells[idx].textContent.trim(), y = b.cells[idx].textContent.trim();
+    if (num) { x = parseFloat(x.replace('%','')) || -Infinity; y = parseFloat(y.replace('%','')) || -Infinity; return asc ? x - y : y - x; }
+    return asc ? x.localeCompare(y) : y.localeCompare(x); });
+  rows.forEach(r => tb.appendChild(r));
+}));
+</script>
+</body>
+</html>
