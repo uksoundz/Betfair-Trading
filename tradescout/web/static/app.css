@@ -74,3 +74,10 @@ table.j { width:100%; border-collapse:collapse; font-size:13px; background:var(-
 .modal-card h2 { margin:0 0 4px; } .slipline.bad td { color:var(--mid); } .ok { color:var(--good); font-weight:700; } .no { color:var(--bad); font-weight:700; }
 .wrap { overflow-x:auto; } .togglerow { display:flex; gap:8px; align-items:flex-start; padding:6px 0; border-top:1px solid var(--line); font-size:13px; }
 .evidence { font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:6px; padding:2px 6px; }
+
+/* price feed and placement */
+.chip { display:inline-block; font-size:11px; font-weight:600; padding:1px 7px; border-radius:999px; border:1px solid var(--line); color:var(--muted); margin-left:4px; vertical-align:middle; }
+.chip.ok { color:var(--good); border-color:var(--good); } .chip.warn { color:var(--mid); border-color:var(--mid); } .chip.dim { opacity:.7; }
+.light.warn { background:var(--mid); }
+.banner.feed { font-size:13px; } .banner.feed ul { margin:4px 0 4px 18px; } .banner.feed p { margin:6px 0; }
+button.place { background:var(--bad); border-color:var(--bad); color:#fff; font-weight:600; } button.place:disabled { opacity:.45; cursor:not-allowed; }

@@ -82,12 +82,23 @@ results download automatically for the ratings.
 2. Follow https://developer.betfair.com/get-started/ to create an **Application Key**. The free
    **Delayed** key is enough to start (prices a minute or so old). The Live key costs a one-off fee
    and is better once you trust the system.
-3. In the app, **Settings** > *Betfair*: enter the application key, your Betfair username and
-   password. Press **Save**, then **Test login**. These are stored only in a file called `.env`
-   inside the app folder on your computer. Never share that file.
+3. In the app, **Settings** > *Betfair*: enter the application key, your Betfair **username** (not
+   your e-mail address) and password. Press **Save**, then **Test login**. These are stored only in
+   a file called `.env` inside the app folder on your computer. Never share that file.
+4. Account with two-factor authentication? Betfair then refuses password logins from programs.
+   Open *Certificate login* under the Betfair settings and follow the link to create a client
+   certificate (two files); enter their paths and Save.
+5. Italian, Spanish, Romanian, Swedish or Australian account? Pick the jurisdiction in the same
+   panel, otherwise the login goes to the wrong Betfair site.
 
 With Betfair connected:
 
+* The pill at the top right reads **Exchange prices · 23/34 priced**: how many of the day's fixtures
+  the exchange could be matched to and priced. Click it for the details: which fixtures could not be
+  matched (with the nearest exchange event names), which are in play or suspended, the session
+  state, and a **Run full diagnosis** button that lists every event the exchange has that day.
+* Prices refresh themselves every minute while the app is open on today or a future day; the
+  countdown is next to the date. **Refresh** pulls everything again straight away.
 * Tennis fixtures come from Betfair's own ATP event list; football prices attach to each fixture.
 * Each idea's **Value check** shows the model probability, the market-implied probability, the
   probability actually used (pulled towards the market), the live price, spread, how much of your
@@ -102,10 +113,21 @@ With Betfair connected:
 * **Off**: review and copy only.
 * **Paper**: the bet slip records what you would have placed, with the prices seen, in My picks.
   Run this for several weeks first.
-* **Live**: the bet slip gains a red **Place bets on Betfair** button for ideas marked TRADE. You
-  see every order and the total at risk, then confirm. Orders are limit orders at the plan price
-  and lapse at the start if unmatched. A daily cap, per-trade and exposure caps, daily and weekly
-  loss limits all apply. Only the pre-match legs are placed; the in-play exits and stops are yours.
+* **Live**: every plan in the Matches view gets a **Place on Betfair** button. It opens the slip:
+  every line with the live price, the size and the money at risk. Press **Place**, then confirm.
+  Orders are limit orders at the plan price and lapse at the start if unmatched. A daily cap,
+  per-trade and exposure caps, daily and weekly loss limits all apply. Only the pre-match legs are
+  placed; the in-play exits and stops are yours.
+  * An idea the app marks **TRADE** places directly after your confirmation.
+  * A **NO TRADE** or **RESEARCH** idea can still be placed, but the slip asks you to tick an
+    override first ("the app finds no edge at this price; this is my call") and My picks shows it
+    with an *override* tag. That keeps the record honest: your overrides and the app's trades are
+    counted separately.
+  * When the button is off, the slip says exactly why: betting mode not Live, Betfair not connected,
+    or no line could be found on the exchange.
+  * The slip's default stake is the risk engine's advice, raised if needed to the smallest stake at
+    which every leg clears Betfair's minimum (£2 a bet, or £1 when the payout reaches £10). It says
+    when it has done that.
 
 ---
 
@@ -129,7 +151,19 @@ be bundled).
 * `No matches in the covered competitions on ...`: a blank day (international break, or tennis
   replay data ending in January 2026 without Betfair). Pick another day from the strip.
 * `football-data.org limit reached`: the free plan allows 10 requests a minute. Wait a minute.
-* `Betfair login failed`: check the key, username and password, and that the account is not
-  locked. The Test login button shows the exact message.
-* Every idea is RESEARCH: Betfair is not connected, or its prices could not be fetched for that
-  fixture. Check the pill at the top right.
+* **Betfair not connected** (amber pill): Settings > Betfair shows the exact message. The usual
+  ones: wrong password or an e-mail address typed as the username; two-factor authentication on
+  the account (use the certificate login); the application key not yet activated for the betting
+  API; the account locked after failed attempts. Fix it, Save, then **Reconnect**.
+* **Prices do not appear, or stop updating**: click the pill at the top right. It tells you whether
+  the session is live, how many fixtures were priced, and lists the ones that could not be matched
+  to an exchange event (with the nearest names on the exchange) or that are in play. Sessions that
+  expire are renewed automatically; if Betfair rejects the renewal, press **Reconnect**. From a
+  terminal, `tradescout betfair-check --date 2026-10-10` prints the same diagnosis.
+* **No Place button on a plan**: open the slip anyway; it lists the reasons (betting mode not Live,
+  Betfair not connected, the idea is NO TRADE and needs the override, no line found on the
+  exchange, stake below the minimum).
+* Every idea is RESEARCH: no exchange prices are attached for that day. For a past day that is
+  normal (pre-match markets are gone). For today, see the two points above.
+* **Delayed application key**: the free key's prices are up to three minutes old; the app says so
+  on every priced card and in the slip. Orders still go through. The Live key removes the delay.

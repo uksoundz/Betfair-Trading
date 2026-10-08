@@ -85,9 +85,19 @@ class Scorer:
 
         # ---- value against the exchange
         unit_money = max(2.0, bank * self.limits.max_per_trade)  # size used for the fill simulation
-        legs, orders = self._value(fixture, fc, r, prices, unit_money)
+        live = prices if (prices is not None and prices.available) else None
+        legs, orders = self._value(fixture, fc, r, live, unit_money)
         priced = [l for l in legs if l.decision != "RESEARCH"]
-        if legs and len(priced) == len(legs):
+        started = prices is not None and prices.status in ("inplay", "suspended", "closed")
+        if started:
+            # the exchange has this match in play (or its markets suspended / closed): a pre-match plan
+            # cannot be entered, so this is a NO TRADE with the reason, not a research idea
+            ev_cons = ev_model = p_cons = p_mkt = None
+            execution = 0.0
+            decision = "NO TRADE"
+            reasons = [prices.note or "Markets are not open for pre-match entry."]
+            evidence = "model-synthetic"
+        elif legs and len(priced) == len(legs):
             # stake-weighted entry edge across legs (fractions sum to 1 within a sizing type)
             ev_cons = float(sum(o.fraction * l.ev_conservative for o, l in zip(orders, legs)))
             ev_model = float(sum(o.fraction * l.ev_model for o, l in zip(orders, legs)))
@@ -113,12 +123,13 @@ class Scorer:
             ev_cons = ev_model = p_cons = p_mkt = None
             execution = 0.0
             decision = "RESEARCH"
-            reasons = ["No exchange price: model view only. NO TRADE until Betfair prices confirm an edge."]
+            why = (prices.note + " ") if (prices is not None and prices.note and not prices.available) else ""
+            reasons = [why + "No exchange price: model view only. NO TRADE until Betfair prices confirm an edge."]
             evidence = "model-synthetic"
 
         # ---- rank score (transparent): 10 points per 1% conservative edge x execution x evidence
         if decision in ("TRADE", "NO TRADE"):
-            score = float(np.clip(1000.0 * max(ev_cons, 0.0) * execution * EVIDENCE_WEIGHT[evidence], 0, 100))
+            score = float(np.clip(1000.0 * max(ev_cons or 0.0, 0.0) * execution * EVIDENCE_WEIGHT[evidence], 0, 100))
             if decision == "NO TRADE":
                 score = min(score, 39.0)  # never looks like a trade
         else:
@@ -147,8 +158,10 @@ class Scorer:
         warnings = list(r.warnings) + list(fc.notes)
         if fc.confidence < 0.5:
             warnings.append("Low data confidence: thin rating history for one side")
-        if prices is not None and prices.as_of:
-            warnings.append(f"Prices as of {prices.as_of}")
+        if live is not None and live.as_of:
+            warnings.append(f"Prices as of {live.as_of}")
+        if live is not None and live.delayed:
+            warnings.append("Exchange prices are delayed (Delayed application key): up to three minutes old.")
         return TradeIdea(
             fixture=fixture, strategy=strategy.key, strategy_label=strategy.label, market=r.market, side=r.side,
             selection=r.selection, hit_prob=r.hit_prob, model_price=r.model_price, market_price=r.market_price, edge=r.edge,

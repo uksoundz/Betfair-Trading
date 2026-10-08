@@ -86,6 +86,11 @@ class Settings:
     betfair_session_token: str | None = field(default_factory=lambda: os.getenv("BETFAIR_SESSION_TOKEN"))
     betfair_username: str | None = field(default_factory=lambda: os.getenv("BETFAIR_USERNAME"))
     betfair_password: str | None = field(default_factory=lambda: os.getenv("BETFAIR_PASSWORD"))
+    # com (UK and international), it, es, ro, se, com.au: picks the identity (login) host
+    betfair_jurisdiction: str = field(default_factory=lambda: os.getenv("BETFAIR_JURISDICTION", "com"))
+    # certificate login for accounts with two-factor authentication (Betfair "non-interactive" login)
+    betfair_cert_file: str | None = field(default_factory=lambda: os.getenv("BETFAIR_CERT_FILE"))
+    betfair_key_file: str | None = field(default_factory=lambda: os.getenv("BETFAIR_KEY_FILE"))
     cache_dir: Path = field(default_factory=lambda: Path(os.getenv("TRADESCOUT_CACHE", REPO_ROOT / ".cache")))
     # Model hyper-parameters
     time_decay_xi: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_XI", "0.003")))  # per day; tuned out of sample
@@ -107,6 +112,11 @@ class Settings:
     @property
     def has_betfair(self) -> bool:
         return bool(self.betfair_app_key and (self.betfair_session_token or (self.betfair_username and self.betfair_password)))
+
+    @property
+    def betfair_can_login(self) -> bool:
+        """Credentials that can open a fresh session (a pasted session token alone cannot)."""
+        return bool(self.betfair_app_key and self.betfair_username and self.betfair_password)
 
 
 settings = Settings()

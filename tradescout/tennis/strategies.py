@@ -153,11 +153,20 @@ class OverGames(Strategy):
     inplay = False
 
     def evaluate(self, fc: TennisForecast, prices: MarketPrices) -> StrategyResult | None:
-        # choose the line with P(over) closest to 55%
-        line, p_over = min(fc.p_over.items(), key=lambda kv: abs(kv[1] - 0.55))
+        # choose the line with P(over) closest to 55%, among the lines the exchange actually quotes when known
+        quoted = []
+        for key in getattr(prices, "quotes", {}) or {}:
+            if key.startswith("TOTAL_GAMES:Over "):
+                try:
+                    quoted.append(float(key.split("Over ", 1)[1]))
+                except ValueError:
+                    pass
+        candidates = {ln: p for ln, p in fc.p_over.items() if not quoted or any(abs(ln - q) < 1e-6 for q in quoted)} or dict(fc.p_over)
+        line, p_over = min(candidates.items(), key=lambda kv: abs(kv[1] - 0.55))
         if p_over < 0.5 or fc.p_fav > 0.8:
             return None
-        price, is_market = self.price_or_fair(None, p_over)
+        q = prices.quote("TOTAL_GAMES", f"Over {line:g}") if hasattr(prices, "quote") else None
+        price, is_market = self.price_or_fair(q.best_back if q and q.best_back else None, p_over)
         scenarios = [Scenario(f"more than {line:g} games", p_over, price - 1), Scenario(f"{line:g} games or fewer", 1 - p_over, -1.0)]
         plan = [
             entry(f"Before the match: back Over {line:g} games at {price:.2f} or higher."),

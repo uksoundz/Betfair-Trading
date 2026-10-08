@@ -75,10 +75,25 @@ class MarketPrices:
     total_matched: Optional[float] = None  # GBP matched on the match odds market (liquidity)
     quotes: dict = field(default_factory=dict)  # "MARKET_TYPE:selection" -> value.Quote (ladders, matched, timestamp)
     as_of: Optional[str] = None  # ISO timestamp of the price snapshot
+    # feed diagnostics: why a fixture has, or has not, got usable pre-match prices
+    status: str = "none"          # ok | none | no_event | no_markets | inplay | suspended | closed | error
+    note: str = ""                # plain-English reason shown to the user when status != ok
+    inplay: bool = False          # the match odds market has turned in play (match started)
+    delayed: Optional[bool] = None  # exchange says the data is delayed (Delayed application key)
+    market_status: dict = field(default_factory=dict)  # market type -> OPEN | SUSPENDED | CLOSED | INPLAY
+    event_id: Optional[str] = None
+    event_name: Optional[str] = None  # how the exchange names this fixture
+    candidates: list = field(default_factory=list)  # nearest exchange events when unmatched: [(name, score)]
 
     @property
     def available(self) -> bool:
-        return self.source != "none" and self.home is not None
+        """Usable pre-match prices exist for at least one market."""
+        return self.source != "none" and (bool(self.quotes) or self.home is not None)
+
+    def diagnostics(self) -> dict:
+        return {"status": self.status, "note": self.note, "inplay": self.inplay, "delayed": self.delayed, "as_of": self.as_of,
+                "event_name": self.event_name, "event_id": self.event_id, "markets": dict(self.market_status),
+                "candidates": [list(c) for c in self.candidates], "quotes": len(self.quotes)}
 
     def quote(self, market: str, selection: str):
         """Quote for an order leg. Selection keys: home/away/draw for MATCH_ODDS, runner names otherwise."""

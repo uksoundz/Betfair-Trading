@@ -7,6 +7,7 @@
   tradescout backtest --from 2024-08-01 --to 2025-05-31 [--write-calibration]
   tradescout ratings --date 2025-11-08
   tradescout refresh-data                 download this season's latest results (ratings stay fresh)
+  tradescout betfair-check --date ...     test the Betfair login and see which fixtures the exchange prices (and why not)
 """
 from __future__ import annotations
 
@@ -36,7 +37,8 @@ def build_scout(args) -> tuple[Scout, OpenFootballProvider]:
         fixtures = FootballDataOrgProvider(settings.football_data_org_key)
     if not args.offline and settings.has_betfair:
         from .data.betfair import BetfairPrices
-        prices = BetfairPrices(settings.betfair_app_key, settings.betfair_session_token, settings.betfair_username, settings.betfair_password)
+        prices = BetfairPrices(settings.betfair_app_key, settings.betfair_session_token, settings.betfair_username, settings.betfair_password,
+                               jurisdiction=settings.betfair_jurisdiction, cert_file=settings.betfair_cert_file, key_file=settings.betfair_key_file)
     return Scout(results, fixtures, prices, xi=settings.time_decay_xi, history_days=settings.history_days), sample
 
 
@@ -170,6 +172,55 @@ def cmd_refresh(args) -> int:
     return 0
 
 
+def cmd_betfair_check(args) -> int:
+    """Show exactly what the exchange returns for a day: login, events, which fixtures matched, prices."""
+    from .data.betfair import BetfairError, BetfairPrices
+    if not settings.has_betfair:
+        print("Betfair is not set up: run  tradescout setup  or use Settings in the app (application key, username, password).")
+        return 1
+    bf = BetfairPrices(settings.betfair_app_key, settings.betfair_session_token, settings.betfair_username, settings.betfair_password,
+                       jurisdiction=settings.betfair_jurisdiction, cert_file=settings.betfair_cert_file, key_file=settings.betfair_key_file)
+    print(f"Login host: {bf.login_url}")
+    try:
+        bf.ensure_session()
+        print("Login: OK")
+        print(f"Betting API: OK ({bf.probe()['event_types']} event types visible)")
+        d = bf.app_key_delayed()
+        print("Application key:", "DELAYED (prices up to 3 minutes old)" if d else "live" if d is False else "unknown type")
+    except BetfairError as exc:
+        print(f"FAILED: {exc}")
+        return 1
+    on = _date(args.date)
+    sport = getattr(args, "sport", "football")
+    if sport == "tennis":
+        from .data.betfair_tennis import BetfairTennis
+        from .tennis.data import TennisProvider
+        bt = BetfairTennis(bf, TennisProvider())
+        fixtures = bt.fixtures(on)
+        diag = bt.diagnose(on, fixtures)
+    else:
+        scout, sample = build_scout(args)
+        fixtures = scout.fixtures.fixtures(on)
+        diag = bf.diagnose(on, fixtures)
+    rep = diag.get("report") or {}
+    print(f"\n{sport.title()} on {on}: {len(fixtures)} fixtures from the fixture feed, {rep.get('events_on_day', 0)} exchange events, "
+          f"{rep.get('matched', 0)} matched, {rep.get('priced', 0)} priced, {len(rep.get('inplay', []))} in play, {len(rep.get('suspended', []))} suspended; "
+          f"{rep.get('calls', 0)} API calls in {rep.get('elapsed_ms', 0)} ms")
+    if rep.get("error"):
+        print("Feed error:", rep["error"])
+    for row in diag.get("fixtures", []):
+        tag = row["status"].upper().ljust(10)
+        extra = f"-> {row['event_name']}" if row.get("event_name") else row.get("note", "")
+        print(f"  {tag} {row['fixture']:48s} {extra}")
+        for name, score in (row.get("candidates") or [])[:2]:
+            print(f"             nearest exchange event: {name} ({score:.2f})")
+    if rep.get("event_names") and args.verbose:
+        print("\nExchange events that day:")
+        for n in rep["event_names"]:
+            print("  ", n)
+    return 0
+
+
 def cmd_app(args) -> int:
     from .web.server import run
     run(host=args.host, port=args.port, open_browser=not args.no_browser)
@@ -243,6 +294,12 @@ def main(argv=None) -> int:
     r.add_argument("--date")
     r.add_argument("--top", type=int, default=40)
     r.set_defaults(func=cmd_ratings)
+
+    bc = sub.add_parser("betfair-check", help="test the Betfair login and show which of a day's fixtures the exchange prices, and why not")
+    bc.add_argument("--date", help="YYYY-MM-DD (default today)")
+    bc.add_argument("--sport", choices=["football", "tennis"], default="football")
+    bc.add_argument("--verbose", action="store_true", help="also list every exchange event name that day")
+    bc.set_defaults(func=cmd_betfair_check)
 
     ap = sub.add_parser("app", help="start the point-and-click web app in your browser")
     ap.add_argument("--host", default="127.0.0.1")

@@ -10,7 +10,8 @@ GET  /api/strategies?sport=              strategy library with guidance and hold
 GET  /api/stats                          holdout statistics per strategy (model-synthetic evidence) + signals log summary
 GET  /api/settings  POST /api/settings   keys, bank, staking, betting mode, enabled strategies (written to .env)
 POST /api/test/fixtures  POST /api/test/betfair
-POST /api/betslip/preview|paper|place    (sport in body)
+GET  /api/betfair/diagnose?date=&sport=  which fixtures the exchange prices today and why not; POST /api/betfair/reconnect
+POST /api/betslip/preview|paper|place    (sport in body; place takes confirm and an explicit override for non-TRADE ideas)
 GET  /api/bets/open  POST /api/bets/cancel
 GET  /api/journal  POST /api/journal  DELETE /api/journal/{id}  POST /api/journal/settle
 """
@@ -30,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .. import signals
-from ..betting import build_slip, place_slip
+from ..betting import build_slip, customer_ref, min_plan_stake, place_slip
 from ..config import FOOTBALL_LEAGUES, LEAGUE_NAMES, REPO_ROOT, SPORTS, TENNIS_LEAGUES, settings, write_env
 from ..data.base import NoPrices
 from ..data.combined import CombinedResults
@@ -47,7 +48,10 @@ from ..tennis.strategies import TENNIS_STRATEGIES
 
 STATIC = Path(__file__).parent / "static"
 CACHE_TTL_MODEL = 600   # seconds, when prices are model-only
-CACHE_TTL_LIVE = 90     # seconds, when exchange prices are attached (stale-signal protection)
+CACHE_TTL_LIVE = 45     # seconds, when exchange prices are attached (stale-signal protection)
+AUTO_REFRESH_SECONDS = 60  # the UI re-pulls prices this often while Betfair is connected
+KEEPALIVE_SECONDS = 600    # Betfair sessions need a keepAlive within 20 minutes on some exchanges
+SIGNAL_INTERVAL = 600      # do not log the same day's signals more often than this
 STATS_PATH = REPO_ROOT / "data" / "strategy_stats.json"
 
 
@@ -66,7 +70,7 @@ class Runtime:
         self.tennis = TennisProvider()
         self.live = None
         self.betfair = None
-        self.betfair_error: Optional[str] = None
+        self.betfair_setup_error: Optional[str] = None
         if settings.football_data_org_key:
             from ..data.football_data_org import FootballDataOrgProvider
             self.live = FootballDataOrgProvider(settings.football_data_org_key)
@@ -78,12 +82,14 @@ class Runtime:
             try:
                 from ..data.betfair import BetfairPrices
                 from ..data.betfair_tennis import BetfairTennis
-                self.betfair = BetfairPrices(settings.betfair_app_key, settings.betfair_session_token, settings.betfair_username, settings.betfair_password)
+                # lazy: no network at start-up; the connect thread below logs in and probes the key
+                self.betfair = BetfairPrices(settings.betfair_app_key, settings.betfair_session_token, settings.betfair_username, settings.betfair_password,
+                                             jurisdiction=settings.betfair_jurisdiction, cert_file=settings.betfair_cert_file, key_file=settings.betfair_key_file)
                 prices = self.betfair
                 bt = BetfairTennis(self.betfair, self.tennis)
                 tennis_fixtures, tennis_prices = bt, bt
             except Exception as exc:
-                self.betfair_error = str(exc)
+                self.betfair_setup_error = str(exc)
         self.scout = Scout(self.results, self.live or self.sample, prices, xi=settings.time_decay_xi, history_days=settings.history_days,
                            max_goals=settings.max_goals)
         self.tennis_scout = TennisScout(self.tennis, tennis_fixtures, tennis_prices)
@@ -93,19 +99,63 @@ class Runtime:
             sc.scorer.kelly_fraction = settings.kelly_fraction
         self.cache: dict[str, tuple[float, dict]] = {}
         self.lock = threading.Lock()
+        self.last_signal: dict[str, float] = {}
+        self.generation = time.time()
         self.results.refresh_in_background()
+        if self.betfair is not None:
+            threading.Thread(target=self._connect_betfair, daemon=True).start()
+            threading.Thread(target=self._keepalive_loop, daemon=True).start()
+
+    def _connect_betfair(self) -> None:
+        """Log in, prove the key works on the betting API, find out whether it is a Delayed key."""
+        try:
+            self.betfair.ensure_session()
+            self.betfair.probe()
+            self.betfair.app_key_delayed()
+        except Exception:
+            pass  # recorded in health; shown in the UI
+
+    def _keepalive_loop(self) -> None:
+        bf = self.betfair
+        while bf is not None:
+            time.sleep(KEEPALIVE_SECONDS)
+            if globals().get("rt") is not self:  # settings were saved and a new Runtime took over
+                return
+            try:
+                if bf.token:
+                    bf.keep_alive()
+            except Exception:
+                pass
 
     @property
     def live_fixtures(self) -> bool:
         return self.live is not None
 
     @property
+    def betfair_configured(self) -> bool:
+        return self.betfair is not None
+
+    @property
     def betfair_ok(self) -> bool:
-        return self.betfair is not None and self.betfair_error is None
+        return self.betfair is not None and self.betfair.health.connected
+
+    @property
+    def betfair_error(self) -> Optional[str]:
+        if self.betfair_setup_error:
+            return self.betfair_setup_error
+        if self.betfair is None:
+            return None
+        return self.betfair.health.last_error
+
+    def betfair_state(self) -> dict:
+        h = self.betfair.health.to_dict() if self.betfair is not None else None
+        return {"configured": self.betfair_configured, "connected": self.betfair_ok, "error": self.betfair_error, "health": h,
+                "delayed": (h or {}).get("delayed"), "can_login": (h or {}).get("can_login", False) or settings.betfair_can_login,
+                "jurisdiction": settings.betfair_jurisdiction, "cert_login": bool(settings.betfair_cert_file)}
 
     @property
     def tennis_live(self) -> bool:
-        return self.betfair_ok
+        return self.betfair_configured
 
     def scout_for(self, sport: str):
         return self.tennis_scout if sport == "tennis" else self.scout
@@ -192,7 +242,11 @@ def _scan_json(scan: ScanResult, sport: str) -> dict:
         ideas = [i for i in scan.ideas if i.fixture.label == fx.label]
         trade_ideas = [i for i in ideas if i.decision == "TRADE"]
         best = trade_ideas[0] if trade_ideas else (ideas[0] if ideas else None)
+        ps = scan.price_status.get(fx.label) or {}
         matches.append({
+            "price_status": ps.get("status", "none"), "price_note": ps.get("note", ""), "price_as_of": ps.get("as_of"),
+            "exchange_event": ps.get("event_name"), "price_candidates": ps.get("candidates") or [], "inplay": bool(ps.get("inplay")),
+            "delayed": ps.get("delayed"), "markets": ps.get("markets") or {},
             "id": fx.fixture_id or fx.label, "home": fx.home, "away": fx.away, "league": fx.league,
             "league_name": LEAGUE_NAMES.get(fx.league, fx.league), "sport": sport,
             "kickoff": fx.kickoff.strftime("%H:%M") if fx.kickoff and fx.kickoff.strftime("%H:%M") != "00:00" else None,
@@ -207,11 +261,18 @@ def _scan_json(scan: ScanResult, sport: str) -> dict:
     decisions = {"TRADE": 0, "NO TRADE": 0, "RESEARCH": 0}
     for i in scan.ideas:
         decisions[i.decision] = decisions.get(i.decision, 0) + 1
+    feed = dict(scan.feed) if scan.feed else None
+    if feed is not None:
+        feed.pop("event_names", None)  # the diagnose route carries the full list
+    priced = sum(1 for m in matches if m["price_status"] == "ok")
     return {
         "sport": sport, "date": scan.date.isoformat(), "weekday": scan.date.strftime("%A %d %B %Y"), "fixtures": len(scan.fixtures),
         "ideas": len(scan.ideas), "decisions": decisions, "model_matches": scan.model_matches, "price_source": scan.price_source,
         "live_fixtures": rt.live_fixtures if sport == "football" else rt.tennis_live, "matches": matches, "skipped": scan.skipped,
-        "bank": settings.bank, "generated": datetime.now().strftime("%H:%M:%S"), "prices_as_of": datetime.utcnow().isoformat(timespec="seconds") if scan.price_source != "none" else None,
+        "feed": feed, "priced": priced, "betfair": rt.betfair_state(),
+        "bank": settings.bank, "generated": datetime.now().strftime("%H:%M:%S"),
+        "prices_as_of": (feed or {}).get("fetched_at") if scan.price_source != "none" else None,
+        "auto_refresh_seconds": AUTO_REFRESH_SECONDS if rt.betfair_configured else None,
     }
 
 
@@ -225,17 +286,22 @@ def _upcoming(sport: str, on: date) -> dict[str, int]:
     return {d.isoformat(): len(prov.fixtures(d)) for d in prov.match_days(on + timedelta(days=1), on + timedelta(days=21))[:7]}
 
 
-def _scan_cached(date_str: str, sport: str, refresh: bool = False) -> dict:
+def _scan_cached(date_str: str, sport: str, refresh: str | bool = False) -> dict:
+    """refresh: False (serve the cache while fresh), 'prices' (re-pull prices now, keep the exchange's
+    event/catalogue cache) or 'full' / True (also drop the exchange caches so newly listed events appear)."""
     try:
         on = date.fromisoformat(date_str)
     except ValueError:
         raise HTTPException(400, "date must be YYYY-MM-DD")
+    mode = "full" if refresh is True or str(refresh).lower() in ("true", "1", "full") else ("prices" if str(refresh).lower() == "prices" else "")
     key = f"{sport}:{date_str}"
     with rt.lock:
         hit = rt.cache.get(key)
         ttl = CACHE_TTL_LIVE if (hit and hit[1].get("price_source") not in (None, "none")) else CACHE_TTL_MODEL
-        if hit and not refresh and time.time() - hit[0] < ttl:
+        if hit and not mode and time.time() - hit[0] < ttl:
             return hit[1]
+        if mode == "full" and rt.betfair is not None:
+            rt.betfair.invalidate()
         if on >= date.today() and sport == "football":
             rt.sample.refresh_current_if_stale()
         rt.refresh_exposure()
@@ -245,12 +311,13 @@ def _scan_cached(date_str: str, sport: str, refresh: bool = False) -> dict:
         except Exception as exc:
             name = type(exc).__name__
             code = 429 if name == "RateLimited" else 502
-            raise HTTPException(code, str(exc) if name in ("RateLimited", "BadApiKey") else f"{name}: {exc}")
+            raise HTTPException(code, str(exc) if name in ("RateLimited", "BadApiKey", "BetfairError") else f"{name}: {exc}")
         if not result["matches"]:
             result["upcoming"] = _upcoming(sport, on)
-        elif on >= date.today() and result["live_fixtures"]:
+        elif on >= date.today() and result["live_fixtures"] and time.time() - rt.last_signal.get(key, 0) > SIGNAL_INTERVAL:
             try:
                 signals.record(scan.ideas, scan.price_source)
+                rt.last_signal[key] = time.time()
             except Exception:
                 pass
         rt.cache[key] = (time.time(), result)
@@ -262,9 +329,11 @@ def _scan_cached(date_str: str, sport: str, refresh: bool = False) -> dict:
 def status():
     ex = rt.refresh_exposure()
     leagues_fb = dict((k, LEAGUE_NAMES[k]) for k in FOOTBALL_LEAGUES) if rt.live_fixtures else {k: LEAGUE_NAMES.get(k, k) for k in rt.sample.leagues}
+    bf = rt.betfair_state()
     return {
         "sports": SPORTS, "live_fixtures": rt.live_fixtures, "tennis_live": rt.tennis_live,
-        "betfair": rt.betfair_ok, "betfair_error": rt.betfair_error,
+        "betfair": rt.betfair_ok, "betfair_error": rt.betfair_error, "betfair_configured": rt.betfair_configured, "betfair_state": bf,
+        "betfair_delayed": bf.get("delayed"), "auto_refresh_seconds": AUTO_REFRESH_SECONDS if rt.betfair_configured else None,
         "bank": settings.bank, "kelly_fraction": settings.kelly_fraction, "seasons": rt.sample.available_seasons(),
         "leagues": {"football": leagues_fb, "tennis": {k: LEAGUE_NAMES[k] for k in TENNIS_LEAGUES}},
         "today": date.today().isoformat(), "live_results": rt.results.status, "journal": journal.summary(),
@@ -354,8 +423,49 @@ def risk(p: float = 0.55, win: float = 1.0, loss: float = -1.0):
 
 
 @app.get("/api/scan")
-def scan(date_str: str = Query(alias="date"), sport: str = "football", refresh: bool = False):
+def scan(date_str: str = Query(alias="date"), sport: str = "football", refresh: str = ""):
     return _scan_cached(date_str, _sport(sport), refresh)
+
+
+@app.get("/api/betfair/diagnose")
+def betfair_diagnose(date_str: str = Query(alias="date"), sport: str = "football"):
+    """Everything needed to see why prices are or are not attached: login state, key type, the exchange's
+    event names for the day, and per fixture the matched event or the nearest misses."""
+    sport = _sport(sport)
+    if rt.betfair is None:
+        return {"ok": False, "configured": False, "error": rt.betfair_setup_error or "Betfair is not set up: add the application key, username and password in Settings.",
+                "betfair": rt.betfair_state()}
+    try:
+        on = date.fromisoformat(date_str)
+    except ValueError:
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    scout = rt.scout_for(sport)
+    with rt.lock:
+        try:
+            fixtures = scout.fixtures.fixtures(on)
+        except Exception as exc:
+            return {"ok": False, "configured": True, "error": f"Could not load fixtures: {exc}", "betfair": rt.betfair_state()}
+        client = scout.prices if hasattr(scout.prices, "diagnose") else rt.betfair
+        diag = client.diagnose(on, fixtures)
+    return {"ok": not diag.get("error") and not (diag.get("report") or {}).get("error"), "configured": True, "sport": sport, **diag, "betfair": rt.betfair_state()}
+
+
+@app.post("/api/betfair/reconnect")
+def betfair_reconnect():
+    """Force a fresh login and key check now (after fixing credentials, or when the session died)."""
+    if rt.betfair is None:
+        return {"ok": False, "error": "Betfair is not set up.", "betfair": rt.betfair_state()}
+    bf = rt.betfair
+    try:
+        bf.token = None
+        bf.login()
+        probe = bf.probe()
+        bf.app_key_delayed()
+        bf.invalidate()
+        rt.cache.clear()
+        return {"ok": True, "probe": probe, "betfair": rt.betfair_state()}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "betfair": rt.betfair_state()}
 
 
 # ----- settings -----------------------------------------------------------------------
@@ -370,6 +480,9 @@ class SettingsIn(BaseModel):
     betfair_app_key: Optional[str] = None
     betfair_username: Optional[str] = None
     betfair_password: Optional[str] = None
+    betfair_jurisdiction: Optional[str] = None
+    betfair_cert_file: Optional[str] = None
+    betfair_key_file: Optional[str] = None
     bank: Optional[float] = None
     kelly_fraction: Optional[float] = None
     betting_mode: Optional[str] = None
@@ -387,7 +500,10 @@ def get_settings():
     return {
         "football_data_org_key": _mask(settings.football_data_org_key), "has_football_key": bool(settings.football_data_org_key),
         "betfair_app_key": _mask(settings.betfair_app_key), "betfair_username": settings.betfair_username or "",
-        "has_betfair_password": bool(settings.betfair_password), "bank": settings.bank, "kelly_fraction": settings.kelly_fraction,
+        "has_betfair_password": bool(settings.betfair_password), "betfair_jurisdiction": settings.betfair_jurisdiction,
+        "betfair_cert_file": settings.betfair_cert_file or "", "betfair_key_file": settings.betfair_key_file or "",
+        "has_session_token": bool(settings.betfair_session_token), "betfair": rt.betfair_state(),
+        "bank": settings.bank, "kelly_fraction": settings.kelly_fraction,
         "betting_mode": settings.betting_mode, "daily_cap": settings.daily_cap, "committed_today": journal.committed_today("live"),
         "commission": settings.commission, "min_edge": settings.min_edge, "max_spread": settings.max_spread,
         "enabled_strategies": [s.key for s in active_strategies(ALL_STRATEGIES + TENNIS_STRATEGIES)],
@@ -404,7 +520,8 @@ def post_settings(body: SettingsIn):
     elif body.football_data_org_key:
         values["FOOTBALL_DATA_API_KEY"] = body.football_data_org_key.strip()
     if body.clear_betfair:
-        values.update({"BETFAIR_APP_KEY": None, "BETFAIR_USERNAME": None, "BETFAIR_PASSWORD": None, "BETFAIR_SESSION_TOKEN": None})
+        values.update({"BETFAIR_APP_KEY": None, "BETFAIR_USERNAME": None, "BETFAIR_PASSWORD": None, "BETFAIR_SESSION_TOKEN": None,
+                       "BETFAIR_CERT_FILE": None, "BETFAIR_KEY_FILE": None})
     else:
         if body.betfair_app_key:
             values["BETFAIR_APP_KEY"] = body.betfair_app_key.strip()
@@ -412,6 +529,13 @@ def post_settings(body: SettingsIn):
             values["BETFAIR_USERNAME"] = body.betfair_username.strip()
         if body.betfair_password:
             values["BETFAIR_PASSWORD"] = body.betfair_password
+            values["BETFAIR_SESSION_TOKEN"] = None  # a pasted token must never outrank fresh credentials
+        if body.betfair_jurisdiction is not None:
+            values["BETFAIR_JURISDICTION"] = body.betfair_jurisdiction.strip().lower() or None
+        if body.betfair_cert_file is not None:
+            values["BETFAIR_CERT_FILE"] = body.betfair_cert_file.strip() or None
+        if body.betfair_key_file is not None:
+            values["BETFAIR_KEY_FILE"] = body.betfair_key_file.strip() or None
     if body.bank is not None and body.bank > 0:
         values["TRADESCOUT_BANK"] = str(body.bank)
     if body.kelly_fraction is not None and 0 < body.kelly_fraction <= 1:
@@ -450,12 +574,20 @@ def test_betfair():
         return {"ok": False, "error": "Betfair application key, username and password are all needed."}
     try:
         from ..data.betfair import BetfairPrices
-        bf = BetfairPrices(settings.betfair_app_key, settings.betfair_session_token, settings.betfair_username, settings.betfair_password)
-        events = bf._rpc("listEvents", {"filter": {"eventTypeIds": ["1"], "marketStartTime": {
-            "from": date.today().isoformat() + "T00:00:00Z", "to": (date.today() + timedelta(days=2)).isoformat() + "T00:00:00Z"}}})
-        tennis = bf._rpc("listEvents", {"filter": {"eventTypeIds": ["2"], "marketStartTime": {
-            "from": date.today().isoformat() + "T00:00:00Z", "to": (date.today() + timedelta(days=2)).isoformat() + "T00:00:00Z"}}})
-        return {"ok": True, "football_events_next_2_days": len(events), "tennis_events_next_2_days": len(tennis)}
+        bf = BetfairPrices(settings.betfair_app_key, settings.betfair_session_token, settings.betfair_username, settings.betfair_password,
+                           jurisdiction=settings.betfair_jurisdiction, cert_file=settings.betfair_cert_file, key_file=settings.betfair_key_file)
+        bf.ensure_session()
+        bf.probe()
+        delayed = bf.app_key_delayed()
+        events = bf.events_on(date.today(), "1") + bf.events_on(date.today() + timedelta(days=1), "1")
+        tennis = bf.events_on(date.today(), "2") + bf.events_on(date.today() + timedelta(days=1), "2")
+        if rt.betfair is not None:  # share the fresh session with the running app
+            rt.betfair.token = bf.token
+            rt.betfair.health.connected = True
+            rt.betfair.health.last_error = rt.betfair.health.last_error_code = None
+            rt.betfair.health.delayed = delayed
+        return {"ok": True, "football_events_next_2_days": len(events), "tennis_events_next_2_days": len(tennis), "delayed": delayed,
+                "login_host": bf.login_url}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -471,6 +603,7 @@ class SlipIn(BaseModel):
 
 class PlaceIn(SlipIn):
     confirm: bool = False
+    override: bool = False  # user explicitly accepts placing an idea the app did not call a TRADE
 
 
 def _rebuild_idea(body) -> tuple:
@@ -489,20 +622,60 @@ def _rebuild_idea(body) -> tuple:
         if r is None:
             raise HTTPException(404, "strategy not available for that match")
         rt.refresh_exposure()
-        idea = scout.scorer.score(fx, fc, strat, r, prices=prices if prices.available else None, sport=sport)
-    stake = body.stake_money if body.stake_money else (idea.stake_money or 2.0)
+        idea = scout.scorer.score(fx, fc, strat, r, prices=prices, sport=sport)
+    floor = min_plan_stake(idea)
+    if body.stake_money:
+        stake = body.stake_money
+    else:
+        # the risk engine's stake, raised to the smallest plan stake at which every leg clears the
+        # exchange minimum (a £2 plan split 80/20 cannot be placed); the slip says when this happened
+        stake = max(idea.stake_money or 0.0, floor)
     return idea, stake, sport
 
 
 def _price_client(sport: str):
     scout = rt.scout_for(sport)
-    return scout.prices if (rt.betfair_ok and hasattr(scout.prices, "resolve")) else None
+    return scout.prices if (rt.betfair_configured and hasattr(scout.prices, "resolve")) else None
+
+
+def _placement_gate(idea, slip) -> dict:
+    """Why the Place button is on or off, spelled out. Placement is always user-confirmed per slip."""
+    sendable = [l for l in slip.lines if l.market_id and l.selection_id and not l.below_minimum]
+    reasons = []
+    if settings.betting_mode != "live":
+        reasons.append("Betting mode is " + ("Paper" if settings.betting_mode == "paper" else "Off") + ": switch it to Live in Settings > Betting to send orders.")
+    if not rt.betfair_configured:
+        reasons.append("Betfair is not set up: add the application key, username and password in Settings.")
+    elif not rt.betfair_ok:
+        reasons.append("Betfair is not connected: " + (rt.betfair_error or "no session yet") + ". Use Reconnect in Settings.")
+    if not slip.lines:
+        reasons.append("This plan has no pre-match selections to place.")
+    elif not sendable:
+        reasons.append("None of the lines could be found on the exchange (or they are below the minimum stake), so there is nothing to send.")
+    hard_block = bool(reasons)
+    override_needed = idea.decision != "TRADE"
+    if override_needed:
+        reasons.append(f"The app's decision is {idea.decision}, not TRADE: " + " ".join(idea.decision_reasons[:2]) +
+                       " You can still place it by ticking the override, which is logged as your call, not the app's.")
+    return {"can_place": not hard_block and not override_needed, "override_allowed": not hard_block and override_needed,
+            "override_needed": override_needed, "place_block_reasons": reasons, "sendable_lines": len(sendable),
+            "betting_mode": settings.betting_mode, "betfair_connected": rt.betfair_ok, "delayed": rt.betfair_state().get("delayed")}
 
 
 @app.post("/api/betslip/preview")
 def betslip_preview(body: SlipIn):
     idea, stake, sport = _rebuild_idea(body)
-    return build_slip(idea, stake, _price_client(sport)).to_dict() | {"decision": idea.decision, "decision_reasons": idea.decision_reasons}
+    slip = build_slip(idea, stake, _price_client(sport))
+    floor = min_plan_stake(idea)
+    advised = round(idea.stake_money or 0.0, 2)
+    note = None
+    if not body.stake_money and advised and stake > advised + 1e-9:
+        note = (f"The risk engine advises £{advised:.2f} for this plan, but every leg must clear the exchange minimum, so the stake has been "
+                f"raised to £{stake:.2f}. Lower it if you prefer; legs under the minimum are then left out.")
+    elif not body.stake_money and not advised and idea.decision != "TRADE":
+        note = f"No stake is advised for a {idea.decision} idea. £{stake:.2f} is the smallest plan stake at which every leg clears the exchange minimum."
+    return slip.to_dict() | {"decision": idea.decision, "decision_reasons": idea.decision_reasons, "stake_advised": advised, "stake_floor": floor,
+                             "stake_note": note, **_placement_gate(idea, slip)}
 
 
 @app.post("/api/betslip/place")
@@ -514,18 +687,26 @@ def betslip_place(body: PlaceIn):
     idea, stake, sport = _rebuild_idea(body)
     client = _price_client(sport)
     if client is None or not hasattr(client, "place_orders"):
-        raise HTTPException(400, "Betfair is not connected. Add your application key, username and password in Settings.")
-    if idea.decision != "TRADE":
-        raise HTTPException(409, f"This idea is {idea.decision}, not a TRADE: " + " ".join(idea.decision_reasons))
+        raise HTTPException(400, "Betfair is not set up. Add your application key, username and password in Settings.")
+    if not rt.betfair_ok:
+        try:
+            client.bf.ensure_session() if hasattr(client, "bf") else client.ensure_session()
+        except Exception as exc:
+            raise HTTPException(400, f"Betfair is not connected: {exc}")
     slip = build_slip(idea, stake, client)
-    ref = f"ts{int(time.time())}"
+    gate = _placement_gate(idea, slip)
+    if not gate["can_place"] and not (gate["override_allowed"] and body.override):
+        raise HTTPException(409, " ".join(gate["place_block_reasons"]))
+    override = idea.decision != "TRADE"
+    ref = customer_ref(body.date, body.match_id, body.strategy, sport, round(stake, 2))
     result = place_slip(slip, client, ref, settings.daily_cap, journal.committed_today("live"))
-    if result.ok:
-        e = journal.add(idea, stake, note="placed on Betfair")
+    if result.ok or result.pending:
+        note = "placed on Betfair" + (f" (override: app decision {idea.decision})" if override else "") + (" (timed out, check open orders)" if result.pending else "")
+        e = journal.add(idea, stake, note=note)
         e.sport = sport
         journal.attach_slip(e.id, [asdict(l) for l in slip.lines], placed="live", refs=result.bet_ids, total=result.committed)
         rt.cache.pop(f"{sport}:{body.date}", None)
-    return {"ok": result.ok, "result": result.to_dict(), "slip": slip.to_dict(), "summary": journal.summary(),
+    return {"ok": result.ok, "result": result.to_dict(), "slip": slip.to_dict(), "summary": journal.summary(), "override": override,
             "committed_today": journal.committed_today("live"), "daily_cap": settings.daily_cap}
 
 

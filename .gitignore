@@ -9,3 +9,4 @@ dist/
 reports/
 .venv/
 data/journal.json
+data/signals.jsonl

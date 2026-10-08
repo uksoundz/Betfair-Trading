@@ -10,8 +10,12 @@ and ranks what is left. Most ideas end as **NO TRADE**. That is the point.
 * Every number is out-of-sample tested: the model settings were chosen on one season and confirmed
   on a later one that was never used for tuning. The results, including the bad ones, are in
   [`docs/AUDIT_REPORT.md`](docs/AUDIT_REPORT.md).
-* Decision support first. Order placement exists (behind an off-by-default switch, a confirmation
-  step, a daily cap and exposure limits) and only accepts ideas marked TRADE.
+* Decision support first. Order placement exists behind an off-by-default switch, a confirmation
+  step, a daily cap and exposure limits. TRADE ideas place directly; anything else needs an
+  explicit, logged override on the slip. Nothing is ever sent without a confirmation click.
+* The price feed explains itself: how many fixtures the exchange priced, which could not be matched
+  to an exchange event and the nearest names, which are in play or suspended, session and key
+  state. Sessions renew themselves; prices refresh every minute while the app is open.
 
 New to all this? Start with [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md).
 
@@ -22,8 +26,9 @@ pip install -e ".[dev]"
 tradescout app                      # web app: sport switch, date picker, opportunities, plans, journal, settings
 tradescout scan --date 2025-11-08   # football replay in the terminal
 tradescout scan --sport tennis --date 2025-06-02
+tradescout betfair-check            # Betfair login test and, per fixture, the exchange event matched or why not
 tradescout holdout                  # out-of-sample protocol for both sports (writes data/strategy_stats.json)
-pytest                              # 54 tests
+pytest                              # 190 tests (incl. the Betfair client against a local stand-in exchange)
 ```
 
 Windows: `install.bat` then `app.bat`.
@@ -106,7 +111,7 @@ which is what the value engine measures and the signals log will record.
 | openfootball (bundled, public domain) | operational | football results 2023-24 to 2026-27, replay fixtures |
 | football-data.org (free key) | operational with key | live football fixtures, fresh results, 9 competitions |
 | TML-Database ATP mirror (bundled, research use) | operational, ends Jan 2026 | tennis results, Elo, replay. A commercial release needs a licensed feed |
-| Betfair Exchange API (account + app key) | operational with key, untested here | prices, depth, tennis fixtures, placement |
+| Betfair Exchange API (account + app key) | operational with key; exercised end to end against a local stand-in exchange (`tests/fake_betfair.py`), not against Betfair itself from this build environment | prices, depth, tennis fixtures, placement |
 | football-data.co.uk closing odds | code present, not reachable from this build environment | bookmaker/exchange closing-odds backtests |
 | xG, lineups, injuries, point-by-point tennis | not integrated | would need licensed providers |
 
@@ -125,11 +130,11 @@ tradescout/
   betting.py    bet slip, tick ladder, placement (live mode only)
   signals.py    append-only log of every idea shown with the prices seen
   journal.py    tracked picks, settled against results
-  data/         openfootball, football-data.org, Betfair (football and tennis), name mapping
+  data/         openfootball, football-data.org, Betfair (football and tennis), scored team-name matching
   web/          FastAPI server and single-page UI
 data/sample/    bundled results; data/calibration.json, strategy_stats.json, tennis_calibration.json
 docs/           GETTING_STARTED.md, AUDIT_REPORT.md, TRADING_GENIE_REVIEW.md
-tests/          54 tests
+tests/          unit tests; fake_betfair.py is a local stand-in for the Betfair API used by the client, route and browser tests
 ```
 
 ## Disclaimer

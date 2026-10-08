@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Iterable, Optional
 
-from .data.base import FixtureProvider, NoPrices, PriceProvider, ResultProvider
+from .data.base import FixtureProvider, NoPrices, PriceProvider, ResultProvider, fetch_prices
 from .model import Forecaster
-from .models import Fixture, MatchForecast, TradeIdea
+from .models import Fixture, MarketPrices, MatchForecast, TradeIdea
 from .ranking import Calibration, Scorer
 from .strategies import ALL_STRATEGIES, Strategy, active_strategies
 
@@ -21,6 +21,8 @@ class ScanResult:
     model_matches: int
     price_source: str
     skipped: list[str] = field(default_factory=list)
+    feed: Optional[dict] = None                      # price feed report for the day (Betfair): matched, unmatched, errors
+    price_status: dict = field(default_factory=dict)  # fixture label -> MarketPrices.diagnostics()
 
     def top(self, n: int = 20, min_score: float = 0.0) -> list[TradeIdea]:
         return [i for i in self.ideas if i.score >= min_score][:n]
@@ -54,21 +56,22 @@ class Scout:
         forecasts: dict[str, MatchForecast] = {}
         ideas: list[TradeIdea] = []
         skipped: list[str] = []
+        price_status: dict[str, dict] = {}
         source = "none"
+        per_fixture, feed = fetch_prices(self.prices, fixtures)
         for fx in fixtures:
             fc = fcaster.forecast(fx)
             forecasts[fx.label] = fc
-            try:
-                prices = self.prices.prices(fx)
-            except Exception as exc:  # a price feed hiccup must never kill the scan
-                skipped.append(f"{fx.label}: price feed error {exc}")
-                prices = NoPrices().prices(fx)
+            prices = per_fixture.get(fx.label) or MarketPrices()
+            if prices.status == "error":
+                skipped.append(f"{fx.label}: {prices.note}")
             if prices.available:
                 source = prices.source
+            price_status[fx.label] = prices.diagnostics()
             for strat in self.strategies:
                 r = strat.evaluate(fc, prices)
                 if r is None:
                     continue
-                ideas.append(self.scorer.score(fx, fc, strat, r, prices=prices if prices.available else None, sport="football"))
+                ideas.append(self.scorer.score(fx, fc, strat, r, prices=prices, sport="football"))
         ideas.sort(key=lambda i: -i.score)
-        return ScanResult(on, fixtures, forecasts, ideas, fcaster.model.n_matches, source, skipped)
+        return ScanResult(on, fixtures, forecasts, ideas, fcaster.model.n_matches, source, skipped, feed, price_status)

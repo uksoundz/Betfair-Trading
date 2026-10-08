@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Callable, Iterable, Optional
 
-from ..data.base import NoPrices, PriceProvider
-from ..models import Fixture, TradeIdea
+from ..data.base import NoPrices, PriceProvider, fetch_prices
+from ..models import Fixture, MarketPrices, TradeIdea
 from ..ranking import Calibration, Scorer
 from ..scout import ScanResult
 from .data import TennisProvider, TennisResult
@@ -35,24 +35,25 @@ class TennisScout:
         forecasts: dict[str, TennisForecast] = {}
         ideas: list[TradeIdea] = []
         skipped: list[str] = []
+        price_status: dict[str, dict] = {}
         source = "none"
+        per_fixture, feed = fetch_prices(self.prices, fixtures)
         for fx in fixtures:
             fc = fcaster.forecast(fx)
             forecasts[fx.label] = fc
-            try:
-                prices = self.prices.prices(fx)
-            except Exception as exc:
-                skipped.append(f"{fx.label}: price feed error {exc}")
-                prices = NoPrices().prices(fx)
+            prices = per_fixture.get(fx.label) or MarketPrices()
+            if prices.status == "error":
+                skipped.append(f"{fx.label}: {prices.note}")
             if prices.available:
                 source = prices.source
+            price_status[fx.label] = prices.diagnostics()
             for strat in self.strategies:
                 r = strat.evaluate(fc, prices)
                 if r is None:
                     continue
-                ideas.append(self.scorer.score(fx, fc, strat, r, prices=prices if prices.available else None, sport="tennis"))
+                ideas.append(self.scorer.score(fx, fc, strat, r, prices=prices, sport="tennis"))
         ideas.sort(key=lambda i: -i.score)
-        return ScanResult(on, fixtures, forecasts, ideas, fcaster.elo.n_matches, source, skipped)
+        return ScanResult(on, fixtures, forecasts, ideas, fcaster.elo.n_matches, source, skipped, feed, price_status)
 
 
 @dataclass

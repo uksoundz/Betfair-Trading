@@ -41,6 +41,7 @@
 
 <main>
   <div id="banner"></div>
+  <div id="feedPanel"></div>
 
   <section id="view-picks" class="view active">
     <div class="toolbar">
@@ -123,9 +124,16 @@
           <li>Enter the key, username and password. Stored only in the .env file on this computer.</li>
         </ol>
         <label class="field">Application key <input id="bfKey"></label>
-        <label class="field">Username <input id="bfUser" autocomplete="off"></label>
+        <label class="field">Username (not your e-mail) <input id="bfUser" autocomplete="off"></label>
         <label class="field">Password <input id="bfPass" type="password" autocomplete="new-password"></label>
-        <div class="row"><button class="primary" id="saveBf">Save</button><button id="testBf">Test login</button><button class="ghost danger" id="clearBf">Remove</button><span class="meta" id="bfResult"></span></div>
+        <label class="field">Account jurisdiction <select id="bfJurisdiction"><option value="com">UK / Ireland / international (.com)</option><option value="it">Italy (.it)</option><option value="es">Spain (.es)</option><option value="ro">Romania (.ro)</option><option value="se">Sweden (.se)</option><option value="com.au">Australia (.com.au)</option></select></label>
+        <details class="meta" style="margin:6px 0"><summary>Two-factor authentication on the account? Certificate login</summary>
+          <p>Betfair accounts with two-factor authentication cannot log in with a password alone. Create a client certificate as described at <a href="https://docs.developer.betfair.com/display/1smk3cen4v3lu3yomq5qye0ni/Non-Interactive+%28bot%29+login" target="_blank" rel="noopener">Betfair: non-interactive login</a>, upload it to your Betfair account, and give the two file paths here.</p>
+          <label class="field">Certificate file (.crt / .pem) <input id="bfCert" placeholder="C:\Users\you\betfair\client-2048.crt"></label>
+          <label class="field">Private key file (.key) <input id="bfKeyFile" placeholder="C:\Users\you\betfair\client-2048.key"></label>
+        </details>
+        <div class="row"><button class="primary" id="saveBf">Save</button><button id="testBf">Test login</button><button id="reconnectBf">Reconnect</button><button class="ghost danger" id="clearBf">Remove</button><span class="meta" id="bfResult"></span></div>
+        <div class="meta" id="bfState" style="margin-top:8px"></div>
       </div>
       <div class="card">
         <h2>Bank, staking and value threshold</h2>
@@ -137,7 +145,7 @@
       </div>
       <div class="card">
         <h2>Betting <span class="light" id="lightBetting"></span></h2>
-        <p class="meta"><b>Off</b>: review only. <b>Paper</b>: record slips in My picks. <b>Live</b>: after you confirm on screen, send a TRADE's lines to Betfair as limit orders at the plan price (lapse at kick-off). Only ideas marked TRADE can be placed.</p>
+        <p class="meta"><b>Off</b>: review only. <b>Paper</b>: record slips in My picks. <b>Live</b>: after you confirm on screen, send a plan's lines to Betfair as limit orders at the plan price (they lapse at kick-off if unmatched). Ideas the app marks TRADE place directly; for a NO TRADE or RESEARCH idea the slip asks for your explicit override first and logs it as your call.</p>
         <label class="field">Mode <select id="betMode"><option value="off">Off (review only)</option><option value="paper">Paper (record, do not place)</option><option value="live">Live (place on Betfair after I confirm)</option></select></label>
         <label class="field">Daily cap (£ at risk per day in live mode) <input id="dailyCap" type="number" min="0" step="5"></label>
         <div class="row"><button class="primary" id="saveBetting">Save</button><span class="meta" id="bettingResult"></span></div>
@@ -165,6 +173,8 @@
           <span class="badge-dec research">RESEARCH</span> no exchange price, so nothing can be called value.
           Most days have few or no TRADEs. That is the system working.</li>
         <li><b>Open a plan</b> for the market, side, entry price, maximum price, stake, maximum loss, why the model sees value, what must happen, when to exit, and what to do if it goes wrong.</li>
+        <li><b>Place on Betfair</b> from any plan in the Matches view (Betfair connected, Betting set to Live): the slip shows every line with the live price, you press Place, then confirm. A TRADE places directly; anything else needs the override tick-box on the slip. Placing is always your decision, one slip at a time.</li>
+        <li><b>Exchange prices</b> refresh themselves every minute while Betfair is connected (the countdown is next to the date). The pill at the top right says how many of the day's fixtures are priced; click it for the feed details: which fixtures the exchange could not be matched to and why, in-play or suspended matches, session and key status, and a full diagnosis.</li>
         <li><b>Track</b> picks into My picks to build a record. <b>Performance</b> shows out-of-sample strategy statistics and what the signals log has recorded.</li>
       </ol>
       <h3>The numbers on a card</h3>
