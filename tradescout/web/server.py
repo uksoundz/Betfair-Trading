@@ -111,6 +111,35 @@ def status():
     }
 
 
+@app.get("/api/calendar")
+def calendar(start: str, days: int = 10):
+    """Fixture counts per day so the UI can show clickable match days."""
+    from datetime import timedelta
+    try:
+        s = date.fromisoformat(start)
+    except ValueError:
+        raise HTTPException(400, "start must be YYYY-MM-DD")
+    key = f"cal:{start}:{days}"
+    with _lock:
+        hit = _cache.get(key)
+        if hit and time.time() - hit[0] < CACHE_TTL:
+            return hit[1]
+        counts: dict[str, int] = {}
+        source = "sample"
+        if _scout.fixtures is not _sample:
+            try:
+                counts = {d.isoformat(): n for d, n in _scout.fixtures.upcoming(s, days).items()}  # type: ignore[attr-defined]
+                source = "live"
+            except Exception as exc:
+                source = f"live feed error: {exc}"
+        if not counts:
+            for d in _sample.match_days(s, s + timedelta(days=days - 1)):
+                counts[d.isoformat()] = len(_sample.fixtures(d))
+        out = {"start": start, "days": days, "counts": counts, "source": source}
+        _cache[key] = (time.time(), out)
+        return out
+
+
 @app.get("/api/strategies")
 def strategies():
     return [{"key": s.key, "label": s.label, "description": s.description, "best_for": s.best_for, "avoid_when": s.avoid_when}

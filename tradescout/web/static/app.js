@@ -6,7 +6,7 @@ const money = (v) => '£' + v.toFixed(2);
 const cls = (s) => s >= 60 ? 'good' : s >= 50 ? 'mid' : 'low';
 const PH = { entry: 'Before kick-off', inplay: 'In play', exit: 'Get out', stop: 'Stop loss', note: 'Note' };
 
-let data = null, strategies = [], selected = null, status = {};
+let data = null, strategies = [], selected = null, status = {}, calendar = {}, autoJumped = false;
 
 function toast(msg, ms = 4000) { const t = $('#toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', ms); }
 function shift(days) { const d = new Date($('#date').value); d.setDate(d.getDate() + days); $('#date').value = d.toISOString().slice(0, 10); scan(); }
@@ -20,6 +20,7 @@ async function init() {
   const ss = $('#stratSelect');
   strategies.forEach(s => { const o = document.createElement('option'); o.value = s.key; o.textContent = s.label; ss.appendChild(o); });
   renderStatus();
+  await loadCalendar(status.today);
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('active')); t.classList.add('active');
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active')); $('#view-' + t.dataset.view).classList.add('active');
@@ -27,7 +28,7 @@ async function init() {
   });
   $('#go').onclick = scan; $('#prev').onclick = () => shift(-1); $('#next').onclick = () => shift(1);
   $('#today').onclick = () => { $('#date').value = status.today; scan(); };
-  $('#date').onchange = scan;
+  $('#date').onchange = () => { autoJumped = true; scan(); };
   ['#search', '#leagueFilter', '#sort'].forEach(s => $(s).oninput = renderList);
   ['#picksCount', '#picksPerMatch', '#picksSort'].forEach(s => $(s).onchange = renderPicks);
   $('#stratSelect').onchange = renderStrategy;
@@ -43,8 +44,27 @@ function renderStatus() {
   $('#status').textContent = bits.join(' · ');
 }
 
+async function loadCalendar(startIso) {
+  try {
+    const r = await fetch(`/api/calendar?start=${startIso}&days=10`); const c = await r.json();
+    calendar = c.counts || {};
+  } catch (e) { calendar = {}; }
+  renderDayStrip(startIso);
+}
+
+function renderDayStrip(startIso) {
+  const start = new Date(startIso + 'T00:00:00'); const sel = $('#date').value; const out = [];
+  for (let k = 0; k < 10; k++) {
+    const d = new Date(start); d.setDate(start.getDate() + k); const iso = d.toISOString().slice(0, 10); const n = calendar[iso] || 0;
+    out.push(`<div class="day ${n ? 'has' : 'none'} ${iso === sel ? 'sel' : ''}" data-d="${iso}">${d.toLocaleDateString(undefined, { weekday: 'short' })} ${d.getDate()}<small>${n ? n + ' games' : 'no games'}</small></div>`);
+  }
+  $('#daystrip').innerHTML = out.join('');
+  document.querySelectorAll('.day').forEach(el => el.onclick = () => { $('#date').value = el.dataset.d; autoJumped = true; scan(); });
+}
+
 async function scan() {
   const d = $('#date').value; if (!d) return;
+  renderDayStrip(status.today);
   $('#matchList').innerHTML = '<div class="spinner">Scanning ' + d + '…</div>'; $('#detail').innerHTML = '';
   try {
     const r = await fetch('/api/scan?date=' + d);
@@ -54,6 +74,13 @@ async function scan() {
   renderStatus(); renderList(); renderPicks(); renderStrategy();
   if (!data.matches.length) {
     const up = data.upcoming || {};
+    const nextDay = Object.keys(up)[0];
+    if (!autoJumped && nextDay) {
+      // first load on a blank day: jump straight to the next day that has matches
+      autoJumped = true; $('#date').value = nextDay; await scan();
+      $('#detail').innerHTML = `<div class="banner">No matches today (${data.weekday} was blank), so this is the next match day. Use the day strip above or the calendar to pick another date.</div>` + $('#detail').innerHTML;
+      return;
+    }
     const list = Object.entries(up).map(([k, n]) => `<li><a href="#" data-d="${k}">${new Date(k).toDateString()}</a> — ${n} fixtures</li>`).join('');
     $('#matchList').innerHTML = `<div class="empty">No matches in the covered leagues on ${data.weekday}.${list ? '<p>Next match days:</p><ul style="text-align:left">' + list + '</ul>' : ''}</div>`;
     document.querySelectorAll('#matchList a').forEach(a => a.onclick = (ev) => { ev.preventDefault(); $('#date').value = a.dataset.d; scan(); });
