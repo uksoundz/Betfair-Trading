@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
 from ..model.inplay import exit_profit_back, fair_price
-from .base import Scenario, Strategy, StrategyResult, entry, exit_, inplay, stop
+from .base import OrderLeg, Scenario, Strategy, StrategyResult, entry, exit_, inplay, stop
 
 EXIT_MINUTE = 60.0
 
@@ -51,7 +51,8 @@ class BackToLayFavourite(Strategy):
             f"{fav_name} score first in {fc.p_fav_scores_first:.0%} of simulations; goal before 60' {fc.p_goal_before[60]:.0%}",
         ]
         return StrategyResult("Match Odds", "back", fav_name, hit, 1 / p_fav, mkt if is_market else None, edge,
-                              scenarios, plan, rationale)
+                              scenarios, plan, rationale,
+                              orders=[OrderLeg("MATCH_ODDS", "home" if fav_home else "away", "back", round(price, 2), 1.0, "stake", "back the favourite pre-match")])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         fav_home = fc.favourite == "home"

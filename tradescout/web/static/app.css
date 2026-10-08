@@ -63,4 +63,7 @@ table.sc tr.sum td { font-weight:700; border-top:2px solid var(--line); }
 .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .light { display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--bad); vertical-align:middle; margin-left:6px; } .light.on { background:var(--good); }
 table.j { width:100%; border-collapse:collapse; font-size:13px; background:var(--card); border-radius:12px; overflow:hidden; } table.j th, table.j td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; } table.j th { color:var(--muted); font-weight:600; } table.j td.n, table.j th.n { text-align:right; }
+.modal { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:20; padding:16px; }
+.modal[hidden] { display:none; } .modal-card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; max-width:860px; width:100%; max-height:90vh; overflow:auto; box-shadow:var(--shadow); }
+.modal-card h2 { margin:0 0 4px; } .slipline.bad td { color:var(--mid); } .ok { color:var(--good); font-weight:700; } .no { color:var(--bad); font-weight:700; }
 .status-open { color:var(--mid); } .status-won { color:var(--good); font-weight:700; } .status-lost { color:var(--bad); font-weight:700; }

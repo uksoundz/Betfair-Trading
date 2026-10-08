@@ -52,6 +52,22 @@ def note(text: str) -> PlanStep:
 
 
 @dataclass
+class OrderLeg:
+    """One pre-match selection the plan needs. Prices are the plan's limits: the minimum
+    acceptable for a back, the maximum for a lay. fraction is the share of the unit risked;
+    sizing says whether that share is a stake (backs) or a liability (lays). Used to build the
+    bet slip the user reviews."""
+
+    market: str      # MATCH_ODDS | OVER_UNDER_25 | OVER_UNDER_15 | CORRECT_SCORE | BOTH_TEAMS_TO_SCORE
+    selection: str   # home | away | draw | Over 2.5 Goals | Under 2.5 Goals | 1-1 | 0-0 ...
+    side: str        # back | lay
+    price: float
+    fraction: float = 1.0
+    sizing: str = "stake"  # stake | liability
+    note: str = ""
+
+
+@dataclass
 class Scenario:
     label: str
     prob: float
@@ -71,6 +87,7 @@ class StrategyResult:
     plan: list[PlanStep]
     rationale: list[str]
     warnings: list[str] = field(default_factory=list)
+    orders: list[OrderLeg] = field(default_factory=list)
 
     def __post_init__(self):
         # The plan "pays off" exactly when it ends in a scenario with positive profit. Deriving this

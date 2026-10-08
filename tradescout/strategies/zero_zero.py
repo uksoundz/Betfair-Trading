@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
 from ..model.inplay import exit_profit_lay, fair_price
-from .base import Scenario, Strategy, StrategyResult, entry, inplay, stop
+from .base import OrderLeg, Scenario, Strategy, StrategyResult, entry, inplay, stop
 
 EXIT_MINUTE = 70.0
 
@@ -39,7 +39,8 @@ class LayZeroZero(Strategy):
             f"P(goal before 70') {p_goal:.0%}; expected goals {fc.total_xg:.2f}",
         ]
         return StrategyResult("Correct Score", "lay", "0-0", hit, 1 / p00, prices.correct_scores.get("0-0") if is_market else None,
-                              edge, scenarios, plan, rationale)
+                              edge, scenarios, plan, rationale,
+                              orders=[OrderLeg("CORRECT_SCORE", "0-0", "lay", round(price, 1), 1.0, "liability", "lay 0-0 pre-match")])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p00 = fc.p_cs.get("0-0", 0.0)

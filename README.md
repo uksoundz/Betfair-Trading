@@ -47,6 +47,8 @@ breakdown for a single game.
 * **By strategy**: which matches suit lay the draw (or any strategy) today, and when to avoid it.
 * **My picks**: a journal that settles tracked picks against real results (strike rate, P/L, ROI).
 * **Settings**: enter the football-data.org key and Betfair details in the browser, with connection tests.
+* **Bet slip**: every pre-match selection of a plan with size, risk, Betfair market/selection ids and the
+  live best price, ready to review, copy or record as a paper bet. Order placement is not included.
 
 ## Quick start
 

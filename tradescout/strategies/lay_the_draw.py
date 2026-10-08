@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
 from ..model.inplay import exit_profit_lay, fair_price
-from .base import Scenario, Strategy, StrategyResult, entry, exit_, inplay, stop
+from .base import OrderLeg, Scenario, Strategy, StrategyResult, entry, exit_, inplay, stop
 
 EXIT_MINUTE = 70.0
 
@@ -53,7 +53,8 @@ class LayTheDraw(Strategy):
         if abs(fc.p_home - fc.p_away) < 0.12:
             warnings.append("Evenly matched sides: equaliser risk is high, consider the 1-1 insurance variant")
         return StrategyResult("Match Odds", "lay", "The Draw", hit, 1 / fc.p_draw, prices.draw if is_market else None, edge,
-                              scenarios, plan, rationale, warnings)
+                              scenarios, plan, rationale, warnings,
+                              orders=[OrderLeg("MATCH_ODDS", "draw", "lay", round(price, 2), 1.0, "liability", "lay the draw pre-match")])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         price, _ = self.price_or_fair(None, fc.p_draw)

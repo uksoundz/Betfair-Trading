@@ -74,4 +74,5 @@ class Scorer:
             historical_strike_rate=hist_rate, historical_sample=n_hist, confidence=fc.confidence, liquidity=liquidity,
             score=score, stake_pct=stake_pct, plan=r.plan, rationale=r.rationale, warnings=warnings,
             scenarios=[{"label": s.label, "prob": s.prob, "profit": s.profit} for s in r.scenarios],
+            orders=list(r.orders),
         )

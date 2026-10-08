@@ -37,6 +37,7 @@ class JournalEntry:
     pnl_per_unit: Optional[float] = None
     result: Optional[str] = None
     note: str = ""
+    slip: list = field(default_factory=list)  # the reviewed selections (paper mode): market, selection, side, price, size
 
 
 @dataclass
@@ -67,6 +68,13 @@ class Journal:
         self.entries.insert(0, e)
         self.save()
         return e
+
+    def attach_slip(self, entry_id: str, legs: list) -> None:
+        for e in self.entries:
+            if e.id == entry_id:
+                e.slip = list(legs)
+                break
+        self.save()
 
     def remove(self, entry_id: str) -> bool:
         before = len(self.entries)

@@ -147,6 +147,7 @@ class TradeIdea:
     rationale: list[str]  # bullet points explaining the numbers
     warnings: list[str] = field(default_factory=list)
     scenarios: list = field(default_factory=list)  # [{"label","prob","profit"}] every way the match can go
+    orders: list = field(default_factory=list)  # [OrderLeg] the pre-match selections this plan needs
 
     @property
     def stars(self) -> int:

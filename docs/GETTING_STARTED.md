@@ -23,6 +23,11 @@ TradeScout. Keep the black window open while you use it.
   and tracked picks settle themselves against the real scores. This is your paper-trading record.
 * **Settings**: paste your football-data.org key (free) for live fixtures, and later your Betfair
   details for real prices. Each has a **Test** button. Set your bank and staking style here too.
+* **Bet slip**: on any plan press **Bet slip**. It lists every pre-match selection with the
+  market, side, plan price, the best price available on Betfair right now (✓ if the plan price is
+  there), the size to enter and what is at risk. Change the stake and recalculate. **Record as
+  paper bet** logs it in My picks; **Copy slip** puts it on the clipboard to key into Betfair.
+  This build does not send orders to Betfair itself.
 * **Past dates** show the real result and whether each plan paid off.
 
 ### Set up in the app (instead of setup.bat)

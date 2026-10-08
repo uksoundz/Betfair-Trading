@@ -27,6 +27,7 @@ from ..config import LEAGUE_NAMES, settings, write_env
 from ..data.base import NoPrices
 from ..data.combined import CombinedResults
 from ..data.openfootball import OpenFootballProvider
+from ..betting import build_slip
 from ..journal import Journal
 from ..report.narrative import idea_verdict, match_summary
 from ..scout import ScanResult, Scout
@@ -86,6 +87,7 @@ def _idea_json(i, fc, result) -> dict:
         "stake_money": round(settings.bank * i.stake_pct / 100, 2), "confidence": fc.confidence, "liquidity": i.liquidity,
         "historical_strike_rate": i.historical_strike_rate, "historical_sample": i.historical_sample,
         "plan": [asdict(p) for p in i.plan], "rationale": i.rationale, "warnings": i.warnings, "scenarios": i.scenarios,
+        "orders": [asdict(o) for o in i.orders],
         "verdict": idea_verdict(i.calibrated_hit_prob, i.calibrated_roi, i.edge, i.score),
         "best_for": strat.best_for, "avoid_when": strat.avoid_when, "description": strat.description,
         "tracked": any(e.date == i.fixture.date.isoformat() and e.home == i.fixture.home and e.away == i.fixture.away and e.strategy == i.strategy
@@ -288,6 +290,50 @@ def test_betfair():
         return {"ok": True, "football_events_next_2_days": len(events)}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+# ----- bet slip (review + paper record; no orders are sent) ----------------------------
+class SlipIn(BaseModel):
+    date: str
+    match_id: str
+    strategy: str
+    stake_money: Optional[float] = None
+
+
+def _rebuild_idea(body) -> tuple:
+    with rt.lock:
+        on = date.fromisoformat(body.date)
+        fcaster = rt.scout.forecaster(on)
+        fx = next((f for f in rt.scout.fixtures.fixtures(on) if (f.fixture_id or f.label) == body.match_id), None)
+        if fx is None:
+            raise HTTPException(404, "match not found for that date")
+        fc = fcaster.forecast(fx)
+        strat = get_strategy(body.strategy)
+        r = strat.evaluate(fc, rt.scout.prices.prices(fx))
+        if r is None:
+            raise HTTPException(404, "strategy not available for that match")
+        idea = rt.scout.scorer.score(fx, fc, strat, r)
+    stake = body.stake_money if body.stake_money else round(settings.bank * idea.stake_pct / 100, 2)
+    return idea, stake
+
+
+@app.post("/api/betslip/preview")
+def betslip_preview(body: SlipIn):
+    idea, stake = _rebuild_idea(body)
+    bf = rt.prices if (settings.has_betfair and rt.betfair_error is None and hasattr(rt.prices, "resolve")) else None
+    return build_slip(idea, stake, bf).to_dict()
+
+
+@app.post("/api/betslip/paper")
+def betslip_paper(body: SlipIn):
+    """Record the reviewed slip as a paper bet in the journal. Nothing is sent to the exchange."""
+    idea, stake = _rebuild_idea(body)
+    bf = rt.prices if (settings.has_betfair and rt.betfair_error is None and hasattr(rt.prices, "resolve")) else None
+    slip = build_slip(idea, stake, bf)
+    e = journal.add(idea, stake, note="paper slip")
+    journal.attach_slip(e.id, [asdict(l) for l in slip.lines])
+    rt.cache.pop(body.date, None)
+    return {"ok": True, "entry": asdict(e), "slip": slip.to_dict(), "summary": journal.summary()}
 
 
 # ----- journal -------------------------------------------------------------------------

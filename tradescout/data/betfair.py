@@ -66,6 +66,49 @@ class BetfairPrices:
                 return ev["event"]["id"]
         return None
 
+    # ----- read-only lookups used by the bet slip -------------------------------------------
+    def _catalogue(self, fixture: Fixture) -> list[dict]:
+        event_id = self._find_event(fixture)
+        if not event_id:
+            return []
+        key = f"cat:{event_id}"
+        if key not in self._event_cache:
+            self._event_cache[key] = self._rpc("listMarketCatalogue", {
+                "filter": {"eventIds": [event_id], "marketTypeCodes": MARKETS},
+                "maxResults": 20, "marketProjection": ["RUNNER_DESCRIPTION", "MARKET_DESCRIPTION"]})
+        return self._event_cache[key]
+
+    @staticmethod
+    def _runner_matches(runner: dict, fixture: Fixture, market: str, selection: str) -> bool:
+        name = runner["runnerName"]
+        if market == "MATCH_ODDS":
+            if selection == "draw":
+                return name == "The Draw"
+            target = fixture.home if selection == "home" else fixture.away
+            if names_match(name, target):
+                return True
+            # Betfair convention: sortPriority 1 = home, 2 = away, 3 = draw
+            return runner.get("sortPriority") == (1 if selection == "home" else 2) and name != "The Draw"
+        if market == "CORRECT_SCORE":
+            return name.replace(" ", "") == selection.replace(" ", "")
+        return name.lower() == selection.lower()
+
+    def resolve(self, fixture: Fixture, market: str, selection: str):
+        """(market_id, selection_id, best_back, best_lay) for one selection, or None."""
+        for cat in self._catalogue(fixture):
+            if cat["description"]["marketType"] != market:
+                continue
+            for r in cat["runners"]:
+                if self._runner_matches(r, fixture, market, selection):
+                    book = self._rpc("listMarketBook", {"marketIds": [cat["marketId"]], "priceProjection": {"priceData": ["EX_BEST_OFFERS"]}})
+                    best_back = best_lay = None
+                    for br in (book[0].get("runners", []) if book else []):
+                        if br["selectionId"] == r["selectionId"]:
+                            best_back = (br.get("ex", {}).get("availableToBack") or [{}])[0].get("price")
+                            best_lay = (br.get("ex", {}).get("availableToLay") or [{}])[0].get("price")
+                    return cat["marketId"], r["selectionId"], best_back, best_lay
+        return None
+
     def prices(self, fixture: Fixture) -> MarketPrices:
         event_id = self._find_event(fixture)
         if not event_id:

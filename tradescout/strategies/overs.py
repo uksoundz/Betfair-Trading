@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
 from ..model.inplay import exit_profit_lay, fair_price
-from .base import Scenario, Strategy, StrategyResult, entry, exit_, inplay, note, stop
+from .base import OrderLeg, Scenario, Strategy, StrategyResult, entry, exit_, inplay, note, stop
 
 
 class BackOversWithInsurance(Strategy):
@@ -49,7 +49,9 @@ class BackOversWithInsurance(Strategy):
         if fc.total_xg < 2.6:
             warnings.append("Total xG under 2.6: this is a marginal overs match")
         return StrategyResult("Over/Under 2.5", "back", "Over 2.5", hit, 1 / p_over, prices.over_25 if o_market else None, edge,
-                              scenarios, plan, rationale, warnings)
+                              scenarios, plan, rationale, warnings,
+                              orders=[OrderLeg("OVER_UNDER_25", "Over 2.5 Goals", "back", round(o_price, 2), w_over, "stake", "main leg"),
+                                      OrderLeg("CORRECT_SCORE", "1-1", "back", round(c_price, 2), w_ins, "stake", "insurance leg")])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p_over = fc.p_over[2.5]
@@ -107,7 +109,9 @@ class LayUndersStaged(Strategy):
             f"Under price expected to shorten from {u0:.2f} to ~{u15:.2f} by 15' if no goal",
         ]
         return StrategyResult("Over/Under 2.5", "lay", "Under 2.5", hit, 1 / p_under, prices.under_25 if is_market else None, edge,
-                              scenarios, plan, rationale)
+                              scenarios, plan, rationale,
+                              orders=[OrderLeg("OVER_UNDER_25", "Under 2.5 Goals", "lay", round(u0, 2), 0.5, "liability",
+                                               "first half of the liability; the second half goes on in play at 15 minutes if still 0-0")])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p_under = 1 - fc.p_over[2.5]
