@@ -111,12 +111,18 @@ class BetSlip:
 
 
 MARKET_LABELS = {"MATCH_ODDS": "Match Odds", "OVER_UNDER_25": "Over/Under 2.5 Goals", "OVER_UNDER_15": "Over/Under 1.5 Goals",
-                 "CORRECT_SCORE": "Correct Score", "BOTH_TEAMS_TO_SCORE": "Both Teams to Score"}
+                 "OVER_UNDER_35": "Over/Under 3.5 Goals", "CORRECT_SCORE": "Correct Score", "BOTH_TEAMS_TO_SCORE": "Both Teams to Score",
+                 "SET_BETTING": "Set Betting", "TOTAL_GAMES": "Total Games", "SET_1_WINNER": "Set 1 Winner"}
 
 
 def runner_label(fixture: Fixture, leg) -> str:
-    if leg.market == "MATCH_ODDS":
+    if leg.market in ("MATCH_ODDS", "SET_1_WINNER"):
         return {"home": fixture.home, "away": fixture.away, "draw": "The Draw"}.get(leg.selection, leg.selection)
+    if leg.market == "SET_BETTING" and "-" in leg.selection:  # home-away sets -> "Player 2-0" as the exchange names it
+        a, b = leg.selection.split("-", 1)
+        return f"{fixture.home} {a}-{b}" if int(a) > int(b) else f"{fixture.away} {b}-{a}"
+    if leg.market == "TOTAL_GAMES":
+        return f"{leg.selection} games"
     return leg.selection
 
 

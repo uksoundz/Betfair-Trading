@@ -185,3 +185,36 @@ improve the forecasts materially.
 7. **Live monitoring.** Tennis in-play repricing is exact in the model but there is no live score
    feed; a streaming price and score source would make the in-play plans actionable rather than
    advisory.
+
+## J. Live price feed and placement round (8 October 2026)
+
+User report after connecting a real Betfair account: no live prices appeared and there was no way to
+place trades from the Matches view. Root causes, verified by replaying the code against a local
+stand-in for the Betfair API (`tests/fake_betfair.py`, which answers login, keepAlive, listEvents,
+listMarketCatalogue, listMarketBook, placeOrders, listCurrentOrders and cancelOrders the way Betfair
+does, with Betfair's own club spellings):
+
+| Cause | Effect | Fix |
+|---|---|---|
+| Fixture-to-event matching needed an exact alias hit on both club names | 19 of 34 fixtures priced on a sample Saturday; no Championship club, PSG, Athletic Club, Napoli or newly promoted side ever matched | scored matcher (accent folding, abbreviation expansion, noise tokens, qualifier penalty, kickoff proximity, ambiguity margin); 34 of 34 priced; 113 must-match and 20 must-not-match spellings under test |
+| Session token fetched once at start-up, never kept alive or renewed | after the Betfair session expired (24 h UK, 12 h elsewhere, 20 min IT/ES) every call failed and every idea silently became RESEARCH | lazy login, keepAlive every 10 minutes, automatic re-login on INVALID_SESSION_INFORMATION, Reconnect button |
+| Price feed errors swallowed into a list the UI never showed; connection pill reflected only the start-up login | the screen said "Exchange prices" while nothing was priced | feed report in every scan (priced / matched / unmatched with nearest exchange names / in play / suspended / error), per-match price chips, diagnosis route and `tradescout betfair-check` |
+| Two API calls per fixture, sequential | a 30-fixture day took 40 calls | one listEvents, one listMarketCatalogue, listMarketBook in chunks of 25 (11 calls for 34 fixtures) |
+| MATCH_ODDS suspended or in play made the whole fixture "unpriced" | pre-kick-off suspensions turned TRADEs into RESEARCH for the cache lifetime | per-market status; in-play or suspended matches are NO TRADE with the reason |
+| Place button hidden unless the idea was already a TRADE, with no explanation | with no prices, no idea was a TRADE, so no button anywhere | Place on Betfair on every plan; the slip spells out each blocking reason; non-TRADE ideas can be placed only after an explicit override that is logged as the user's call |
+| Default slip stake split across legs fell under the exchange minimum | a £2 plan split 80/20 had nothing sendable | stake floor so every leg clears the minimum, shown on the slip |
+| Placement edge cases | a Betfair timeout counted as "not placed" (double stake on retry); a rejected second market left half a plan live | deterministic customerRef (exchange de-duplication), TIMEOUT reconciliation through listCurrentOrders, unmatched legs cancelled when a later market is rejected |
+| Tennis runner names | total-games runners ("Over 22.5 Games") and set-betting runners ("Alcaraz 2-0") never matched the strategies' selections; player names with trailing initials or multi-word surnames resolved wrongly | token-based player matcher and runner-key normalisation |
+
+Evidence: 183 unit and route tests pass, including 27 that drive the real client, scan pipeline and web
+routes against the stand-in exchange (login, expiry and renewal, batched prices, in-play and suspended
+handling, unmatched diagnostics, placement with confirmation, override logging, mode-off refusal). A
+Playwright run in Chromium against the app wired to the stand-in shows prices on every fixture, the
+feed panel and diagnosis table, the Place button, the confirmation step, orders arriving at the
+exchange stand-in, the override path and the journal entries.
+
+Not established: behaviour against Betfair itself, which this build environment cannot reach. The
+stand-in follows the documented API; real event spellings for leagues outside the six bundled ones,
+the exact tennis market type codes, and account-specific login responses (two-factor, jurisdiction)
+remain to be confirmed on a live account. The diagnosis panel exists so that whatever differs is
+visible on the first day rather than silent.
