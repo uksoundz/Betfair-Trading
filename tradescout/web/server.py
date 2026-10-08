@@ -157,10 +157,44 @@ def index():
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 
+def _free_port(host: str, preferred: int) -> int:
+    import socket
+    for port in range(preferred, preferred + 20):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind((host, port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError("no free port found")
+
+
+def _open_when_ready(url: str, host: str, port: int, timeout: float = 20.0) -> None:
+    """Open the browser only once the server answers, so the user never lands on another program."""
+    import socket
+    import webbrowser
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                break
+        except OSError:
+            time.sleep(0.3)
+    webbrowser.open(url)
+
+
 def run(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> None:
     import uvicorn
+    if not (STATIC / "index.html").exists():
+        raise SystemExit(f"TradeScout UI files are missing from {STATIC}. Re-run install.bat (or: py -m pip install -e .)")
+    port = _free_port(host, port)
+    url = f"http://{host}:{port}/"
+    print("=" * 64, flush=True)
+    print(f"  TradeScout is starting at {url}")
+    print("  If the browser does not open, copy that address into it yourself.")
+    print(f"  Live fixtures: {'ON' if settings.football_data_org_key else 'off'}   Betfair prices: {'ON' if settings.has_betfair else 'off'}")
+    print("  Keep this window open while you use the app. Press Ctrl+C to stop.")
+    print("=" * 64, flush=True)
     if open_browser:
-        import webbrowser
-        threading.Timer(1.2, lambda: webbrowser.open(f"http://{host}:{port}")).start()
-    print(f"TradeScout is running at http://{host}:{port}  (press Ctrl+C to stop)")
+        threading.Thread(target=_open_when_ready, args=(url, host, port), daemon=True).start()
     uvicorn.run(app, host=host, port=port, log_level="warning")
