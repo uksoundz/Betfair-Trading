@@ -136,7 +136,7 @@ def net_ev(p: float, price: float, side: str, commission: float) -> float:
 
 def assess(p_model: float, side: str, quote: Optional[Quote], limit_price: Optional[float], size: float,
            market: str, confidence: float, commission: float, min_edge: float, max_spread: float,
-           min_total_matched: float = 2000.0, model_weight: Optional[float] = None) -> ValueAssessment:
+           min_total_matched: float = 2000.0, model_weight: Optional[float] = None, model_weight_scale: float = 1.0) -> ValueAssessment:
     """Assess one selection. `limit_price` is the plan's minimum (back) / maximum (lay) price;
     when None the best available price is used."""
     reasons: list[str] = []
@@ -150,11 +150,12 @@ def assess(p_model: float, side: str, quote: Optional[Quote], limit_price: Optio
     fill = simulate_fill(ladder, limit, size, side)
     price = fill.avg_price or best
     if fill.fraction == 0:
-        reasons.append(f"Plan price {limit:.2f} is not available (best {best:.2f}); the order would rest unmatched.")
+        reasons.append(f"Plan price {limit:.2f} is not on offer right now (best {best:.2f}); the order rests at the plan price until kick-off.")
     elif fill.fraction < 1:
         reasons.append(f"Only £{fill.fillable:.0f} of £{size:.0f} available at the plan price; expect a partial fill.")
     p_mkt = quote.implied
     w = MODEL_WEIGHT.get(market, MODEL_WEIGHT["DEFAULT"]) if model_weight is None else model_weight
+    w = min(0.7, w * max(0.1, model_weight_scale))
     p_blend = w * p_model + (1 - w) * p_mkt if p_mkt is not None else p_model
     # conservative: pull the blend back towards the market by the model's own uncertainty
     u = 1.0 - max(0.0, min(1.0, confidence))
@@ -164,20 +165,26 @@ def assess(p_model: float, side: str, quote: Optional[Quote], limit_price: Optio
     ev_blend = net_ev(p_blend, eff_price, side, commission)
     ev_cons = net_ev(p_cons, eff_price, side, commission)
     spread = quote.spread
+    # Orders are resting limit orders at the plan price that lapse at kick-off, so today's depth and
+    # today's spread are not execution blockers: the money arrives by kick-off and the exit happens in
+    # play where the big football markets are deep. They do say how reliable the market's own
+    # probability is right now, so they shade execution quality and, when the spread is so wide that
+    # the mid-point means nothing, hold the decision back until closer to the start.
     liquidity_ok = (quote.total_matched or 0) >= min_total_matched
-    spread_ok = spread is None or spread <= max_spread
-    execution = (fill.fraction if fill.fraction > 0 else 0.3) * (1.0 if spread_ok else 0.5) * (1.0 if liquidity_ok else 0.6)
+    spread_wide = spread is not None and spread > max_spread
+    spread_unreliable = spread is not None and spread > max(3 * max_spread, 0.10)
+    execution = (fill.fraction if fill.fraction > 0 else 0.3) * (0.7 if spread_wide else 1.0) * (0.85 if not liquidity_ok else 1.0)
     decision = "TRADE"
     if ev_cons < min_edge:
         decision = "NO TRADE"
         reasons.append(f"Conservative net edge {ev_cons:+.1%} per unit risked is below the {min_edge:.0%} threshold after {commission:.0%} commission.")
-    if not spread_ok:
+    if spread_unreliable:
         decision = "NO TRADE"
-        reasons.append(f"Back/lay spread {spread:.1%} is wider than the {max_spread:.0%} limit: thin market.")
+        reasons.append(f"Back/lay spread {spread:.0%} is too wide for the market to tell us anything yet; check again nearer kick-off.")
+    elif spread_wide:
+        reasons.append(f"Spread {spread:.1%} is wide right now (above {max_spread:.0%}): the market's own probability is uncertain, so the edge estimate is rough.")
     if not liquidity_ok:
-        reasons.append(f"Only £{(quote.total_matched or 0):,.0f} matched on this market so far: liquidity is thin.")
-        if ev_cons < min_edge * 2:
-            decision = "NO TRADE"
+        reasons.append(f"Only £{(quote.total_matched or 0):,.0f} matched so far: thin now. A resting order fills only if the price is on offer by kick-off; the exit is in play where the market is deep.")
     age = quote.age_seconds()
     if age is not None and age > STALE_AFTER_SECONDS:
         reasons.append(f"Prices are {age / 60:.0f} minutes old: refresh before acting.")
@@ -186,7 +193,7 @@ def assess(p_model: float, side: str, quote: Optional[Quote], limit_price: Optio
             decision = "NO TRADE"
             reasons.append("Price snapshot too old to act on; the signal is invalid until refreshed.")
     if fill.fraction == 0 and decision == "TRADE":
-        reasons.append("Value exists only if the market comes to the plan price; place as a limit order and let it lapse.")
+        reasons.append("Value exists only if the market comes to the plan price: the order rests at that price and lapses at kick-off if it never arrives.")
     if decision == "TRADE" and not reasons:
         reasons.append(f"Conservative net edge {ev_cons:+.1%} per unit risked after commission; market implies {p_mkt:.1%}, model {p_model:.1%}.")
     liability = 1.0 if side == "back" else (eff_price - 1)

@@ -141,6 +141,8 @@
         <label class="field">Staking style <select id="kelly"><option value="0.1">Cautious (10% Kelly)</option><option value="0.25">Standard (25% Kelly)</option><option value="0.5">Aggressive (50% Kelly)</option></select></label>
         <label class="field">Commission rate you pay on Betfair (%) <input id="commission" type="number" min="0" max="20" step="0.5"></label>
         <label class="field">Minimum conservative net edge to call a TRADE (%) <input id="minEdge" type="number" min="0" max="50" step="0.5"></label>
+        <label class="field">How much to trust the model against the exchange <select id="modelWeight"><option value="1">Audited default (model gets 15-30% of the say)</option><option value="1.5">More (×1.5)</option><option value="2">Much more (×2)</option><option value="3">Model-led (×3)</option></select></label>
+        <p class="meta">Raising this calls TRADE more often by trusting the model's probabilities more than the market's. The out-of-sample tests do not justify it yet; the signals log will show whether it pays.</p>
         <div class="row"><button class="primary" id="saveStake">Save</button><span class="meta" id="stakeResult"></span></div>
       </div>
       <div class="card">

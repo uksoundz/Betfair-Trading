@@ -340,7 +340,7 @@ def status():
         "leagues": {"football": leagues_fb, "tennis": {k: LEAGUE_NAMES[k] for k in TENNIS_LEAGUES}},
         "today": date.today().isoformat(), "live_results": rt.results.status, "journal": journal.summary(),
         "betting_mode": settings.betting_mode, "daily_cap": settings.daily_cap, "committed_today": journal.committed_today("live"),
-        "commission": settings.commission, "min_edge": settings.min_edge, "max_spread": settings.max_spread,
+        "commission": settings.commission, "min_edge": settings.min_edge, "max_spread": settings.max_spread, "model_weight_scale": settings.model_weight_scale,
         "exposure": {"open_total": round(ex.open_total, 2), "by_strategy": ex.by_strategy, "by_sport": ex.by_sport,
                      "realised_today": round(ex.realised_today, 2), "realised_week": round(ex.realised_week, 2),
                      "drawdown": round(ex.drawdown, 4), "current_bank": round(ex.current_bank, 2), "peak_bank": round(ex.peak_bank, 2)},
@@ -491,6 +491,7 @@ class SettingsIn(BaseModel):
     daily_cap: Optional[float] = None
     commission: Optional[float] = None
     min_edge: Optional[float] = None
+    model_weight_scale: Optional[float] = None
     enabled_strategies: Optional[list[str]] = None
     clear_football: bool = False
     clear_betfair: bool = False
@@ -507,7 +508,7 @@ def get_settings():
         "has_session_token": bool(settings.betfair_session_token), "betfair": rt.betfair_state(),
         "bank": settings.bank, "kelly_fraction": settings.kelly_fraction,
         "betting_mode": settings.betting_mode, "daily_cap": settings.daily_cap, "committed_today": journal.committed_today("live"),
-        "commission": settings.commission, "min_edge": settings.min_edge, "max_spread": settings.max_spread,
+        "commission": settings.commission, "min_edge": settings.min_edge, "max_spread": settings.max_spread, "model_weight_scale": settings.model_weight_scale,
         "enabled_strategies": [s.key for s in active_strategies(ALL_STRATEGIES + TENNIS_STRATEGIES)],
         "env_path": str(Path(settings.cache_dir).parent / ".env"),
     }
@@ -550,6 +551,8 @@ def post_settings(body: SettingsIn):
         values["TRADESCOUT_COMMISSION"] = str(body.commission)
     if body.min_edge is not None and 0 <= body.min_edge <= 0.5:
         values["TRADESCOUT_MIN_EDGE"] = str(body.min_edge)
+    if body.model_weight_scale is not None and 0.5 <= body.model_weight_scale <= 3:
+        values["TRADESCOUT_MODEL_WEIGHT_SCALE"] = str(body.model_weight_scale)
     if body.enabled_strategies is not None:
         allk = [s.key for s in ALL_STRATEGIES + TENNIS_STRATEGIES]
         chosen = {k for k in body.enabled_strategies if k in allk}

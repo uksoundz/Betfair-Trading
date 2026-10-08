@@ -51,7 +51,7 @@ async function init() {
   $('#clearBf').onclick = () => saveSettings({ clear_betfair: true }, '#bfResult');
   $('#testBf').onclick = () => testConn('/api/test/betfair', '#bfResult', r => `Logged in via ${r.login_host.replace(/https?:\/\//, '').split('/')[0]}. ${r.football_events_next_2_days} football and ${r.tennis_events_next_2_days} tennis events in the next 2 days.${r.delayed ? ' Delayed application key: prices up to 3 minutes old.' : r.delayed === false ? ' Live application key.' : ''}`);
   $('#reconnectBf').onclick = reconnectBetfair;
-  $('#saveStake').onclick = () => saveSettings({ bank: +$('#bank').value, kelly_fraction: +$('#kelly').value, commission: (+$('#commission').value) / 100, min_edge: (+$('#minEdge').value) / 100 }, '#stakeResult');
+  $('#saveStake').onclick = () => saveSettings({ bank: +$('#bank').value, kelly_fraction: +$('#kelly').value, commission: (+$('#commission').value) / 100, min_edge: (+$('#minEdge').value) / 100, model_weight_scale: +$('#modelWeight').value }, '#stakeResult');
   $('#saveBetting').onclick = () => {
     const mode = $('#betMode').value;
     if (mode === 'live' && !confirm('Live mode lets the Bet slip send real orders to Betfair after you press a confirmation button. Ideas the app marks TRADE place directly; anything else needs your explicit override on the slip. Turn it on?')) { $('#betMode').value = status.betting_mode || 'off'; return; }
@@ -518,9 +518,9 @@ function whyNoTrade(src) {
     const txt = (i.decision_reasons || []).join(' '); let any = false;
     if (/started|in play/i.test(txt)) { bump('match already in play'); any = true; }
     if (/below/i.test(txt)) { bump(/plan structure costs/i.test(txt) ? 'edge below the threshold once in-play exit costs are charged' : 'edge below the threshold after commission'); any = true; }
-    if (/wider than/i.test(txt)) { bump('back/lay spread too wide (thin market)'); any = true; }
-    if (/not available/i.test(txt)) { bump('plan price not on offer right now'); any = true; }
-    if (/matched on this market/i.test(txt)) { bump('too little money matched yet (liquidity)'); any = true; }
+    if (/too wide for the market/i.test(txt)) { bump('spread far too wide to price yet (check nearer kick-off)'); any = true; }
+    if (/not on offer right now/i.test(txt)) { bump('plan price not on offer yet (order would rest until kick-off; not a blocker)'); }
+    if (/matched so far: thin now/i.test(txt)) { bump('thin now (not a blocker: fills by kick-off if the price comes)'); }
     if (/too old/i.test(txt)) { bump('prices too old'); any = true; }
     if (!any) bump('other');
   }
@@ -541,7 +541,7 @@ function whyPanel(src) {
   const w = whyNoTrade(src); if (!w) return '';
   const rows = Object.entries(w.tally).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<li><b>${n}</b> × ${esc(k)}</li>`).join('');
   const threshold = `${(status.min_edge * 100).toFixed(1)}%`;
-  return `<details class="card why" ${w.trades ? '' : 'open'}><summary><b>${w.trades ? w.trades + ' TRADE' + (w.trades === 1 ? '' : 'S') + ' today.' : 'Why is nothing a TRADE today?'}</b> <span class="meta">${w.priced} ideas priced by the exchange, ${w.total - w.priced - w.trades} without a usable price. A TRADE needs a conservative net edge of at least ${threshold} after commission at a price and size actually on offer.</span></summary>
+  return `<details class="card why" ${w.trades ? '' : 'open'}><summary><b>${w.trades ? w.trades + ' TRADE' + (w.trades === 1 ? '' : 'S') + ' today.' : 'Why is nothing a TRADE today?'}</b> <span class="meta">${w.priced} ideas priced by the exchange, ${w.total - w.priced - w.trades} without a usable price. A TRADE needs a conservative net edge of at least ${threshold} after commission at the plan price. Thin money and wide spreads now are noted, not blockers: orders rest until kick-off and exits happen in play.</span></summary>
     <div class="meta">Reasons across the priced ideas (one idea can fail for more than one reason):</div><ul style="margin:6px 0 6px 18px">${rows}</ul>
     ${w.best ? `<div class="meta">Closest to a trade: <b>${esc(w.best.m.home)} v ${esc(w.best.m.away)}</b> · ${esc(w.best.strategy_label)} · conservative edge <b>${spct(w.best.ev_conservative)}</b> (the raw model says ${spct(w.best.ev_model)}; the market implies ${pct(w.best.p_market)}). ${esc((w.best.decision_reasons || [])[0] || '')}</div>` : ''}
     <div class="meta" style="margin-top:6px">The model only gets a small say against the exchange (15-30% by market), so a TRADE needs a clear mispricing. You can lower the threshold in Settings > "Minimum conservative net edge", place any plan yourself with the override on its slip, or rank by conservative edge above to see the nearest misses.</div>
@@ -667,7 +667,7 @@ async function loadSettings() {
     $('#bfKey').value = ''; $('#bfKey').placeholder = s.betfair_app_key ? `saved: ${s.betfair_app_key}` : 'e.g. aBcDeFgHiJkLmNoP';
     $('#bfUser').value = s.betfair_username || ''; $('#bfPass').value = ''; $('#bfPass').placeholder = s.has_betfair_password ? 'saved (type to replace)' : '';
     $('#bfJurisdiction').value = s.betfair_jurisdiction || 'com'; $('#bfCert').value = s.betfair_cert_file || ''; $('#bfKeyFile').value = s.betfair_key_file || '';
-    $('#bank').value = s.bank; $('#kelly').value = String(s.kelly_fraction); $('#commission').value = (s.commission * 100).toFixed(1); $('#minEdge').value = (s.min_edge * 100).toFixed(1);
+    $('#bank').value = s.bank; $('#kelly').value = String(s.kelly_fraction); $('#commission').value = (s.commission * 100).toFixed(1); $('#minEdge').value = (s.min_edge * 100).toFixed(1); $('#modelWeight').value = String(s.model_weight_scale || 1);
     $('#betMode').value = s.betting_mode || 'off'; $('#dailyCap').value = s.daily_cap;
     const bf = s.betfair || {};
     $('#lightFixtures').className = 'light ' + (status.live_fixtures ? 'on' : ''); $('#lightBetfair').className = 'light ' + (bf.connected ? 'on' : bf.configured ? 'warn' : ''); $('#lightBetting').className = 'light ' + (s.betting_mode === 'live' ? 'on' : '');

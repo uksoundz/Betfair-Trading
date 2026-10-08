@@ -70,7 +70,7 @@ class Scorer:
             quote = prices.quote(leg.market, leg.selection) if prices is not None else None
             size = max(2.0, unit_money * leg.fraction) if leg.sizing == "stake" else max(2.0, unit_money * leg.fraction / max(leg.price - 1, 0.01))
             out.append(assess(leg.p_model, leg.side, quote, leg.price, size, leg.market, fc.confidence, settings.commission,
-                              settings.min_edge, settings.max_spread))
+                              settings.min_edge, settings.max_spread, model_weight_scale=settings.model_weight_scale))
         return out, list(r.orders)
 
     def score(self, fixture: Fixture, fc, strategy: Strategy, r: StrategyResult, prices: Optional[MarketPrices] = None,

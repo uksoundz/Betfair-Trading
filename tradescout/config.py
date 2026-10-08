@@ -97,6 +97,8 @@ class Settings:
     commission: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_COMMISSION", "0.05")))  # Betfair UK base rate on net market winnings
     min_edge: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_MIN_EDGE", "0.02")))  # conservative net EV per unit risked needed to call a trade
     max_spread: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_MAX_SPREAD", "0.04")))  # (lay - back) / back
+    # multiplier on the model's weight against the market (1.0 = the audited default; higher trusts the model more; unproven)
+    model_weight_scale: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_MODEL_WEIGHT_SCALE", "1.0")))
     history_days: int = field(default_factory=lambda: int(os.getenv("TRADESCOUT_HISTORY_DAYS", "900")))
     max_goals: int = 8
     bank: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_BANK", "1000")))
