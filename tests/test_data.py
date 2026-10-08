@@ -28,3 +28,9 @@ def test_name_canonicalisation():
     assert canonical("Manchester United FC") == "Manchester United FC"
     assert names_match("Tottenham", "Tottenham Hotspur FC")
     assert canonical("Some Unknown Club") == "Some Unknown Club"
+
+
+def test_current_season_label(provider):
+    assert provider.current_season(date(2026, 10, 8)) == "2026-27"
+    assert provider.current_season(date(2026, 3, 1)) == "2025-26"
+    assert "2026-27" in provider.available_seasons()

@@ -139,13 +139,10 @@ Tips:
 * `tradescout scan --html today.html` for the clickable web page.
 * The free tier allows 10 requests a minute. One scan uses one or two, so this is plenty.
 
-### Step 4. Keep the ratings fresh (once a month)
+### Step 4. Keeping the ratings fresh
 
-The team ratings are learned from past results. Download the latest results with:
-
-```
-tradescout refresh-data --seasons 2025-26 2026-27
-```
+The team ratings are learned from past results. `tradescout scan` downloads this season's latest
+results automatically once a day. To force it: `tradescout refresh-data`
 
 ---
 
@@ -216,8 +213,9 @@ each market. Ideas with positive edge in liquid markets rise to the top.
   `py -m pip install -e .`
 * `tradescout is not recognized`: close the command window and open a new one in the folder, or
   run `py -m tradescout.cli scan` instead of `tradescout scan`, or use the `.bat` files.
-* `No fixtures found for 2026-xx-xx`: the fixture feed is not set up (do Stage 2), or there are
-  no matches in the covered leagues today. Use `--date` with a past date to replay.
+* `No matches in the covered leagues on ...`: there are simply no games today in the leagues
+  covered (international breaks are the usual reason: early September, early October, mid
+  November, late March). The tool lists the next match days; copy the suggested command.
 * `401` or `403` from football-data.org: the key was pasted wrongly. Run `tradescout setup` again.
 * Betfair login failed: check username/password, and that your account is not set to require
   two-factor on API login.

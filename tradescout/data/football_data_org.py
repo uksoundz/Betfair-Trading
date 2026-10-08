@@ -52,6 +52,20 @@ class FootballDataOrgProvider:
                                away=canonical(m["awayTeam"]["name"]), kickoff=ko, fixture_id=str(m["id"])))
         return out
 
+    def upcoming(self, start: date, days: int = 10, leagues: Iterable[str] | None = None) -> dict[date, int]:
+        """Number of fixtures per day over the next `days` (free tier allows a 10-day window)."""
+        from datetime import timedelta
+        codes = [COMPETITIONS[l] for l in (leagues or COMPETITIONS) if l in COMPETITIONS]
+        end = start + timedelta(days=min(days, 10))
+        payload = self._get("/matches", dateFrom=start.isoformat(), dateTo=end.isoformat(), competitions=",".join(codes))
+        counts: dict[date, int] = {}
+        for m in payload.get("matches", []):
+            if m.get("status") in {"FINISHED", "POSTPONED", "CANCELLED"}:
+                continue
+            d = date.fromisoformat(m["utcDate"][:10])
+            counts[d] = counts.get(d, 0) + 1
+        return dict(sorted(counts.items()))
+
     def results(self, leagues: Iterable[str] | None = None, before: date | None = None) -> list[MatchResult]:
         out: list[MatchResult] = []
         for league in leagues or COMPETITIONS:

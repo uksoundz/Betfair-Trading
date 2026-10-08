@@ -74,6 +74,22 @@ class OpenFootballProvider:
         self._raw[key] = matches
         return matches
 
+    @staticmethod
+    def current_season(today: date | None = None) -> str:
+        return _season_label(today or date.today())
+
+    def refresh_current_if_stale(self, max_age_hours: int = 24, timeout: int = 30) -> bool:
+        """Download this season's files if missing or older than max_age_hours. Never raises."""
+        import time
+        season = self.current_season()
+        sample = self.data_dir / f"{season}_{self.leagues[0]}.json"
+        if sample.exists() and (time.time() - sample.stat().st_mtime) < max_age_hours * 3600:
+            return False
+        try:
+            return bool(self.refresh([season], timeout=timeout))
+        except Exception:
+            return False
+
     def available_seasons(self) -> list[str]:
         return sorted({p.name.split("_")[0] for p in self.data_dir.glob("*_*.json")})
 

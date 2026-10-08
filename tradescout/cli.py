@@ -5,7 +5,7 @@
   tradescout match "Arsenal FC" "Chelsea FC" --date 2025-11-30
   tradescout backtest --from 2024-08-01 --to 2025-05-31 [--write-calibration]
   tradescout ratings --date 2025-11-08
-  tradescout refresh-data --seasons 2025-26 2026-27
+  tradescout refresh-data                 download this season's latest results (ratings stay fresh)
 """
 from __future__ import annotations
 
@@ -39,13 +39,38 @@ def build_scout(args) -> tuple[Scout, OpenFootballProvider]:
     return Scout(results, fixtures, prices, xi=settings.time_decay_xi, history_days=settings.history_days), sample
 
 
+def _explain_no_fixtures(on: date, scout: Scout, sample: OpenFootballProvider, leagues) -> None:
+    from datetime import timedelta
+    live = scout.fixtures is not sample
+    print(f"No matches in the covered leagues on {on:%A %d %B %Y}.")
+    upcoming: dict[date, int] = {}
+    if live:
+        try:
+            upcoming = scout.fixtures.upcoming(on + timedelta(days=1), 10, leagues)  # type: ignore[attr-defined]
+        except Exception as exc:
+            print(f"(could not query the fixture feed for the days ahead: {exc})")
+    if not upcoming:
+        for d in sample.match_days(on + timedelta(days=1), on + timedelta(days=21), leagues):
+            upcoming[d] = len(sample.fixtures(d, leagues))
+    if upcoming:
+        print("Next match days:")
+        for d, n in list(upcoming.items())[:7]:
+            print(f"  {d:%a %d %b}  {n} fixtures   ->  tradescout scan --date {d.isoformat()}")
+    else:
+        print("Nothing found in the next few weeks either. Replay a past day with, for example:  tradescout scan --date 2025-11-08 --show-results")
+    if not live:
+        print("Tip: run  tradescout setup  and enter a football-data.org key to scan live fixtures.")
+
+
 def cmd_scan(args) -> int:
     scout, sample = build_scout(args)
     on = _date(args.date)
+    if not args.offline and not args.date:
+        if sample.refresh_current_if_stale():
+            print("Downloaded this season's latest results for the ratings.")
     scan = scout.scan(on, args.leagues)
     if not scan.fixtures:
-        print(f"No fixtures found for {on}. Known match days near this date: "
-              + ", ".join(d.isoformat() for d in sample.match_days(on.replace(day=1), on.replace(day=28))[:12]))
+        _explain_no_fixtures(on, scout, sample, args.leagues)
         return 1
     print_scan(scan, top=args.top, min_score=args.min_score, per_match=args.per_match, sort=args.sort)
     if args.html:
@@ -123,7 +148,8 @@ def cmd_ratings(args) -> int:
 
 def cmd_refresh(args) -> int:
     sample = OpenFootballProvider(args.data_dir)
-    written = sample.refresh(args.seasons, args.leagues)
+    seasons = args.seasons or [sample.current_season()]
+    written = sample.refresh(seasons, args.leagues)
     print(f"Downloaded {len(written)} files into {sample.data_dir}")
     return 0
 
@@ -199,7 +225,7 @@ def main(argv=None) -> int:
     st.set_defaults(func=cmd_setup)
 
     rf = sub.add_parser("refresh-data", help="download season files from openfootball")
-    rf.add_argument("--seasons", nargs="+", required=True)
+    rf.add_argument("--seasons", nargs="*", default=None, help="e.g. 2025-26 2026-27 (default: current season)")
     rf.set_defaults(func=cmd_refresh)
 
     args = p.parse_args(argv)
