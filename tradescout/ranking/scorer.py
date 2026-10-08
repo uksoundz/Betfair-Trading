@@ -70,7 +70,7 @@ class Scorer:
         return TradeIdea(
             fixture=fixture, strategy=strategy.key, strategy_label=strategy.label, market=r.market, side=r.side,
             selection=r.selection, hit_prob=r.hit_prob, model_price=r.model_price, market_price=r.market_price, edge=r.edge,
-            expected_roi=r.expected_roi, win_return=win, loss_return=loss, calibrated_hit_prob=cal_hit,
+            expected_roi=r.expected_roi, win_return=win, loss_return=loss, calibrated_hit_prob=cal_hit, calibrated_roi=float(roi_adj),
             historical_strike_rate=hist_rate, historical_sample=n_hist, confidence=fc.confidence, liquidity=liquidity,
             score=score, stake_pct=stake_pct, plan=r.plan, rationale=r.rationale, warnings=warnings,
         )

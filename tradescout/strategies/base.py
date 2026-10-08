@@ -24,6 +24,34 @@ DEFAULT_OVERROUND = 1.03  # applied to fair prices when no exchange feed is conn
 
 
 @dataclass
+class PlanStep:
+    """One instruction in a trading plan. phase is one of entry | inplay | exit | stop | note."""
+
+    phase: str
+    text: str
+
+
+def entry(text: str) -> PlanStep:
+    return PlanStep("entry", text)
+
+
+def inplay(text: str) -> PlanStep:
+    return PlanStep("inplay", text)
+
+
+def exit_(text: str) -> PlanStep:
+    return PlanStep("exit", text)
+
+
+def stop(text: str) -> PlanStep:
+    return PlanStep("stop", text)
+
+
+def note(text: str) -> PlanStep:
+    return PlanStep("note", text)
+
+
+@dataclass
 class Scenario:
     label: str
     prob: float
@@ -40,7 +68,7 @@ class StrategyResult:
     market_price: Optional[float]
     edge: Optional[float]
     scenarios: list[Scenario]
-    plan: list[str]
+    plan: list[PlanStep]
     rationale: list[str]
     warnings: list[str] = field(default_factory=list)
 
@@ -48,6 +76,10 @@ class StrategyResult:
         # The plan "pays off" exactly when it ends in a scenario with positive profit. Deriving this
         # from the scenario tree keeps every strategy's hit probability on the same definition.
         self.hit_prob = float(sum(s.prob for s in self.scenarios if s.profit > 0))
+
+    @property
+    def plan_text(self) -> list[str]:
+        return [p.text for p in self.plan]
 
     @property
     def expected_roi(self) -> float:
@@ -70,7 +102,8 @@ class Strategy:
     key: str = "base"
     label: str = "Base"
     description: str = ""
-    # which league averages / match profiles this strategy likes, used in rationale only
+    best_for: str = ""      # plain-English: the kind of match this suits
+    avoid_when: str = ""    # plain-English: when to leave it alone
     needs_prices: tuple[str, ...] = ()
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:

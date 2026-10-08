@@ -136,12 +136,13 @@ class TradeIdea:
     win_return: float  # profit per unit risked when the plan pays off
     loss_return: float  # (negative) profit per unit risked when it fails
     calibrated_hit_prob: float  # hit_prob shrunk towards the strategy's historical strike rate
+    calibrated_roi: float  # expected ROI re-priced with the calibrated hit probability (what the score uses)
     historical_strike_rate: Optional[float]
     historical_sample: int
     confidence: float
     liquidity: float
     score: float  # 0..100 composite rank score
     stake_pct: float  # fractional Kelly stake as % of bank
-    plan: list[str]  # human-readable trading plan
+    plan: list  # list[PlanStep] - structured trading plan (phase, text)
     rationale: list[str]  # bullet points explaining the numbers
     warnings: list[str] = field(default_factory=list)

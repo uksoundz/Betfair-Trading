@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
 from ..model.inplay import exit_profit_lay, fair_price
-from .base import Scenario, Strategy, StrategyResult
+from .base import Scenario, Strategy, StrategyResult, entry, exit_, inplay, note, stop
 
 
 class BackOversWithInsurance(Strategy):
@@ -10,12 +10,14 @@ class BackOversWithInsurance(Strategy):
     label = "Back Over 2.5 + 1-1 insurance"
     description = ("80% of stake on Over 2.5 goals, 20% on the 1-1 correct score. The 1-1 cover pays for "
                    "the most common 'two goals and stop' scoreline; held to settlement unless an early goal lets you green.")
+    best_for = "Two attacking sides or a big favourite against a leaky defence, 2.8+ goals expected, Over 2.5 priced 1.7 to 2.3."
+    avoid_when = "Over 2.5 shorter than 1.6 (the insurance costs more than it covers) or fewer than 2.6 goals expected."
     needs_prices = ("over_25",)
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         p_over = fc.p_over[2.5]
-        if p_over < 0.45:
-            return None
+        if p_over < 0.50 or fc.total_xg < 2.6:
+            return None  # only genuinely goal-friendly fixtures
         o_price, o_market = self.price_or_fair(prices.over_25, p_over)
         if o_price < 1.6:
             return None  # overs too short to carry 20% insurance: the plan would lose even when 3 goals arrive
@@ -31,11 +33,12 @@ class BackOversWithInsurance(Strategy):
         hit = p_over + (p11 if scenarios[1].profit > 0 else 0.0)
         edge = self.edge_back(p_over, o_price) if o_market else None
         plan = [
-            f"Pre-match: back Over 2.5 at ~{o_price:.2f} with 80% of stake.",
-            f"Pre-match: back Correct Score 1-1 at ~{c_price:.1f} with 20% of stake.",
-            "If a goal arrives before 20': lay Over 2.5 to remove risk and leave a free bet; keep the 1-1 running.",
-            "At 1-1: you have a free trade - lock equal profit or hold for the third goal.",
-            "Hold to settlement otherwise; no further action needed.",
+            entry(f"Before kick-off: back Over 2.5 Goals at {o_price:.2f} or higher with 80% of your stake."),
+            entry(f"Before kick-off: back Correct Score 1-1 at around {c_price:.1f} with the other 20%. This is your insurance."),
+            inplay("If a goal arrives before 20 minutes: lay Over 2.5 for your original stake to remove all risk and leave a free bet running. Keep the 1-1 running."),
+            exit_("At 1-1: both legs are winning. Either lock equal profit across the correct score market or hold for the third goal."),
+            note("Otherwise hold to the final whistle. Three or more goals pays the overs leg; 1-1 pays the insurance leg."),
+            stop("There is no in-play stop: the maximum loss is the stake, and that happens on 0-0, 1-0, 0-1, 2-0 or 0-2."),
         ]
         rationale = [
             f"Model P(Over 2.5) {p_over:.1%} (fair {1/p_over:.2f}) vs {o_price:.2f}" + (" [exchange]" if o_market else " [model]"),
@@ -65,6 +68,8 @@ class LayUndersStaged(Strategy):
     label = "Lay Under 2.5 (staged entry)"
     description = ("Lay half the liability on Under 2.5 pre-match and the other half on 15 minutes if still 0-0, "
                    "when the price has shortened. Exit on the second goal or at 70'.")
+    best_for = "Matches expecting 3+ goals where Under 2.5 is 1.8 to 3.0, giving room for the price to shorten before you add."
+    avoid_when = "Under 2.5 already below 1.7, or defensive sides where a slow start is likely to stay slow."
     needs_prices = ("under_25",)
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
@@ -92,10 +97,10 @@ class LayUndersStaged(Strategy):
         hit = sum(s.prob for s in scenarios if s.profit > 0)
         edge = self.edge_lay(p_under, u0) if is_market else None
         plan = [
-            f"Pre-match: lay Under 2.5 at ~{u0:.2f} with 50% of liability.",
-            f"On 15' if still 0-0: lay the second 50% at ~{u15:.2f}.",
-            "After the second goal: back Under 2.5 to green, or let it settle if the third goal looks likely (xG).",
-            "If 0-0 at 70': close out, the market will have moved hard against you.",
+            entry(f"Before kick-off: lay Under 2.5 Goals at {u0:.2f} with half of your planned liability."),
+            inplay(f"On 15 minutes, if still 0-0: lay the second half of your liability. The price should have shortened to around {u15:.2f}, so you get more for the same risk."),
+            exit_("After the second goal: back Under 2.5 to lock in a profit, or let it run to the third goal if the match is open and the live stats back it."),
+            stop("If it is still 0-0 on 70 minutes: back Under 2.5 and close. The price will have collapsed against you and the third goal is unlikely."),
         ]
         rationale = [
             f"Model P(Under 2.5) {p_under:.1%}; expected goals {fc.total_xg:.2f}",

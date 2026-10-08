@@ -36,12 +36,21 @@ For every fixture it produces:
 `tradescout match "Chelsea FC" "Wolverhampton Wanderers FC" --date 2025-11-08` prints the full
 breakdown for a single game.
 
+## The app
+
+`tradescout app` (or double-click `app.bat` on Windows) opens a local web app: date picker for any
+day past or future, every match with its best score, the model's view in plain English, and for
+each strategy a plan split into Before kick-off / In play / Get out / Stop loss with the reasoning
+and a scenario table. Top picks ranks the whole day; By strategy answers "which matches suit lay
+the draw today?". Past dates show the real result and whether each plan paid off.
+
 ## Quick start
 
 New to the command line? Follow [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md), it walks through every click.
 
 ```bash
 pip install -e ".[dev]"
+tradescout app                                          # web app at http://127.0.0.1:8765
 tradescout scan --date 2025-11-08 --show-results        # replay a Saturday from the bundled data
 tradescout scan --date 2025-11-08 --html reports/sat.html
 tradescout match "Arsenal FC" "Tottenham Hotspur FC" --date 2025-11-23

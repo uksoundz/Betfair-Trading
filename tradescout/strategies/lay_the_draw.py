@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
 from ..model.inplay import exit_profit_lay, fair_price
-from .base import Scenario, Strategy, StrategyResult
+from .base import Scenario, Strategy, StrategyResult, entry, exit_, inplay, stop
 
 EXIT_MINUTE = 70.0
 
@@ -12,6 +12,8 @@ class LayTheDraw(Strategy):
     label = "Lay the Draw"
     description = ("Lay the draw before kick-off. Green up when the favourite scores; close for a "
                    "controlled loss if it is still 0-0 on 70 minutes or the underdog scores first.")
+    best_for = "A clear favourite that scores early and often, draw priced 3.0 or bigger, decent total goals expected."
+    avoid_when = "Evenly matched sides, draw under 2.6, cagey low-scoring leagues, or a team that sits on 1-0 leads."
     needs_prices = ("draw",)
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
@@ -36,10 +38,11 @@ class LayTheDraw(Strategy):
         edge = self.edge_lay(fc.p_draw, price) if is_market else None
         fav_name = fc.fixture.home if fav_home else fc.fixture.away
         plan = [
-            f"Pre-match: lay The Draw at ~{price:.2f} (liability = 1 unit).",
-            f"If {fav_name} score first: back the draw to green up (draw should trade ~{d_fav:.1f} after an early goal).",
-            f"If the underdog scores first: close immediately (draw ~{d_dog:.1f}) and take the small loss.",
-            f"If 0-0 on 70': close at ~{d_70:.1f}. Never let a lay run into a late 0-0.",
+            entry(f"Before kick-off: lay The Draw at {price:.2f} or higher. Your liability is the unit you are risking."),
+            inplay(f"Wait for the first goal. Nothing to do while it is 0-0 before 70 minutes."),
+            exit_(f"If {fav_name} score first: back The Draw to green up. The draw should be trading around {d_fav:.1f} after the goal, so lock equal profit across all results."),
+            exit_(f"If the underdog scores first: back The Draw straight away at around {d_dog:.1f} and take the small loss. Do not wait for an equaliser."),
+            stop(f"If it is still 0-0 on 70 minutes: back The Draw at around {d_70:.1f} and exit. A late 0-0 is the one result that hurts this trade."),
         ]
         rationale = [
             f"Model draw probability {fc.p_draw:.1%} (fair {1/fc.p_draw:.2f}) vs entry {price:.2f}" + (" [exchange]" if is_market else " [model, no feed]"),

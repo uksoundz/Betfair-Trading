@@ -53,7 +53,7 @@
 <summary>{{ '%.0f'|format(i.score) }} &middot; {{ i.fixture.label }} &middot; {{ i.strategy_label }}</summary>
 <div class="meta">xG {{ '%.2f'|format(fc.home_xg) }} - {{ '%.2f'|format(fc.away_xg) }} &middot; H/D/A {{ fc.p_home|pct }}/{{ fc.p_draw|pct }}/{{ fc.p_away|pct }} &middot; O2.5 {{ fc.p_over[2.5]|pct }} &middot; BTTS {{ fc.p_btts|pct }} &middot; goal before 70' {{ fc.p_goal_before[70]|pct }} &middot; favourite scores first {{ fc.p_fav_scores_first|pct }}</div>
 <div class="meta">Hit {{ i.hit_prob|pct }} (calibrated {{ i.calibrated_hit_prob|pct }}) &middot; win {{ i.win_return|spct }} / loss {{ i.loss_return|spct }} per unit risked &middot; expected ROI {{ i.expected_roi|spct }} &middot; stake {{ '%.1f'|format(i.stake_pct) }}% of bank{% if i.historical_strike_rate is not none %} &middot; history {{ i.historical_strike_rate|pct }} over {{ i.historical_sample }} trades{% endif %}</div>
-<ul class="plan">{% for p in i.plan %}<li>{{ p }}</li>{% endfor %}</ul>
+<ul class="plan">{% for p in i.plan %}<li><b>{{ p.phase }}</b> {{ p.text }}</li>{% endfor %}</ul>
 <ul class="meta">{% for r in i.rationale %}<li>{{ r }}</li>{% endfor %}</ul>
 {% for w in i.warnings %}<div class="warn">! {{ w }}</div>{% endfor %}
 </details>

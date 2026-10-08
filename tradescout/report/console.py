@@ -70,12 +70,12 @@ def print_match(fc: MatchForecast, ideas: list[TradeIdea], actual=None) -> None:
     for i in ideas:
         colour = "green" if i.score >= 60 else "yellow" if i.score >= 50 else "white"
         body = [f"[bold]{i.strategy_label}[/]  score [{colour}]{i.score:.0f}[/]  hit {i.hit_prob:.0%} (calibrated {i.calibrated_hit_prob:.0%})  "
-                f"expected ROI {i.expected_roi:+.1%} per unit risked  win {i.win_return:+.0%} / loss {i.loss_return:+.0%}  stake {i.stake_pct:.1f}% of bank"]
+                f"expected ROI {i.calibrated_roi:+.1%} per unit risked (model {i.expected_roi:+.1%})  win {i.win_return:+.0%} / loss {i.loss_return:+.0%}  stake {i.stake_pct:.1f}% of bank"]
         if i.historical_strike_rate is not None:
             body.append(f"History: {i.historical_strike_rate:.0%} strike over {i.historical_sample} similar trades")
         body += [f"  {r}" for r in i.rationale]
         body.append("Plan:")
-        body += [f"  {n}. {p}" for n, p in enumerate(i.plan, 1)]
+        body += [f"  {n}. [{p.phase}] {p.text}" for n, p in enumerate(i.plan, 1)]
         for w in i.warnings:
             body.append(f"  [yellow]! {w}[/]")
         console.print(Panel("\n".join(body), expand=True))

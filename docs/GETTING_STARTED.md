@@ -5,6 +5,25 @@ the code. Stages 2 and 3 are optional upgrades you can do later.
 
 ---
 
+## The app
+
+Once installed, double-click **`app.bat`** (or type `tradescout app`). Your browser opens on
+TradeScout:
+
+* **Pick any date** with the calendar at the top: today, this weekend, next month, or a past
+  Saturday. Press **Scan this day**.
+* **Matches**: every fixture with its best score. Click one for the model's view in plain English,
+  then each strategy that fits with a colour-coded plan: Before kick-off, In play, Get out, Stop loss,
+  and a Why section.
+* **Top picks**: the day's ranked shortlist. Choose how many, one per match or not, and whether to
+  rank by score, chance of paying off, expected return or market edge.
+* **By strategy**: pick Lay the Draw (or any other) and see which matches suit it today, plus when to
+  use it and when to avoid it.
+* **Past dates** show the real result and whether each plan paid off, so you can check the tool
+  against reality before risking anything.
+
+Keep the black window open while you use the app; close it to stop.
+
 ## Stage 1: run it on the built-in data (10 minutes)
 
 ### Windows: the double-click way (recommended)
@@ -14,10 +33,10 @@ the code. Stages 2 and 3 are optional upgrades you can do later.
    Python if it is missing, then installs TradeScout. Wait for "Done", press any key.
    * If Windows shows "Windows protected your PC", click **More info**, then **Run anyway**.
      The files are plain text; right-click, Edit to read them.
-3. Double-click **`replay.bat`**. It ranks a Saturday from last season, shows how the picks did,
-   and opens a web page with every plan.
-4. Later: double-click **`setup.bat`** to enter your keys (Stage 2), then **`scan.bat`** each
-   morning to rank today's matches.
+3. Double-click **`app.bat`**. The app opens in your browser. Pick 8 November 2025 in the date
+   box and press Scan this day to see a full Saturday with results.
+4. Later: double-click **`setup.bat`** to enter your keys (Stage 2). After that `app.bat` scans
+   real fixtures for any date you pick.
 
 If you prefer typing commands, or you are on a Mac, carry on below.
 

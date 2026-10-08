@@ -1,5 +1,6 @@
 """Command line entry point.
 
+  tradescout app                        open the web app (buttons, date picker, plans)
   tradescout scan                       rank every fixture today (live feeds if keys set, else sample data)
   tradescout scan --date 2025-11-08     replay a past day from the bundled data and show what happened
   tradescout match "Arsenal FC" "Chelsea FC" --date 2025-11-30
@@ -154,6 +155,12 @@ def cmd_refresh(args) -> int:
     return 0
 
 
+def cmd_app(args) -> int:
+    from .web.server import run
+    run(host=args.host, port=args.port, open_browser=not args.no_browser)
+    return 0
+
+
 def cmd_setup(args) -> int:
     """Ask for the API keys and save them to .env next to the code."""
     from .config import ENV_FILE
@@ -220,6 +227,12 @@ def main(argv=None) -> int:
     r.add_argument("--date")
     r.add_argument("--top", type=int, default=40)
     r.set_defaults(func=cmd_ratings)
+
+    ap = sub.add_parser("app", help="start the point-and-click web app in your browser")
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--no-browser", action="store_true")
+    ap.set_defaults(func=cmd_app)
 
     st = sub.add_parser("setup", help="enter your API keys once; saved to .env")
     st.set_defaults(func=cmd_setup)

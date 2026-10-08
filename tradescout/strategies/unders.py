@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
 from ..model.inplay import exit_profit_back, fair_price
-from .base import Scenario, Strategy, StrategyResult
+from .base import Scenario, Strategy, StrategyResult, entry, exit_, inplay, stop
 
 EXIT_MINUTE = 60.0
 
@@ -12,6 +12,8 @@ class BackUndersTradeOut(Strategy):
     label = "Back Under 2.5, trade out on 60'"
     description = ("Back Under 2.5 in a low-xG match and lay it back on 60 minutes (or on the first goal). "
                    "Profits from time decay rather than the final result; the stop is the first goal.")
+    best_for = "Cagey matches expecting 2.2 goals or fewer, Under 2.5 priced 1.7 to 2.1, two organised defences."
+    avoid_when = "Any match with 2.6+ goals expected, or sides that concede early."
     needs_prices = ("under_25",)
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
@@ -30,9 +32,10 @@ class BackUndersTradeOut(Strategy):
         hit = sum(s.prob for s in scenarios if s.profit > 0)
         edge = self.edge_back(p_under, price) if is_market else None
         plan = [
-            f"Pre-match: back Under 2.5 at ~{price:.2f} (stake = 1 unit).",
-            f"If 0-0 on 60': lay Under 2.5 at ~{u60:.2f} and bank the time decay.",
-            "On the first goal: lay immediately to cut the loss (the earlier the goal, the bigger the hit).",
+            entry(f"Before kick-off: back Under 2.5 Goals at {price:.2f} or higher."),
+            inplay("Every goalless minute shortens the Under price in your favour. Sit tight while it is 0-0."),
+            exit_(f"On 60 minutes if still 0-0: lay Under 2.5 at around {u60:.2f} and bank the profit. Do not get greedy into the last half hour."),
+            stop("On the first goal, whenever it comes: lay Under 2.5 immediately to cut the loss. The earlier the goal, the bigger the hit."),
         ]
         rationale = [
             f"Model P(Under 2.5) {p_under:.1%} (fair {1/p_under:.2f}) vs {price:.2f}" + (" [exchange]" if is_market else " [model]"),

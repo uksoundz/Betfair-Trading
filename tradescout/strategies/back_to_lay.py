@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
 from ..model.inplay import exit_profit_back, fair_price
-from .base import Scenario, Strategy, StrategyResult
+from .base import Scenario, Strategy, StrategyResult, entry, exit_, inplay, stop
 
 EXIT_MINUTE = 60.0
 
@@ -12,6 +12,8 @@ class BackToLayFavourite(Strategy):
     label = "Back-to-Lay the favourite"
     description = ("Back the favourite pre-match and lay off when they take the lead. Stop out at 0-0 on 60' or "
                    "if the underdog scores first.")
+    best_for = "A favourite priced 1.5 to 2.5 that starts fast and scores first often; home sides against poor travellers."
+    avoid_when = "Favourite shorter than 1.4 (no room to shorten) or longer than 2.6 (not really a favourite)."
     needs_prices = ("home", "away")
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
@@ -38,10 +40,11 @@ class BackToLayFavourite(Strategy):
         edge = self.edge_back(p_fav, price) if is_market else None
         fav_name = fc.fixture.home if fav_home else fc.fixture.away
         plan = [
-            f"Pre-match: back {fav_name} at ~{price:.2f} (stake = 1 unit).",
-            f"When {fav_name} score: lay at ~{f_up:.2f} to lock profit across all outcomes.",
-            f"If the underdog scores first: lay at ~{f_down:.2f} for a controlled loss, do not chase.",
-            f"If 0-0 on 60': lay at ~{f_60:.2f} and exit.",
+            entry(f"Before kick-off: back {fav_name} at {price:.2f} or higher. Your stake is the unit you are risking."),
+            inplay("Wait for the first goal. Do nothing while it is 0-0 before the hour."),
+            exit_(f"When {fav_name} score: lay {fav_name} at around {f_up:.2f} to lock a profit whatever happens next."),
+            exit_(f"If the underdog scores first: lay {fav_name} at around {f_down:.2f} for a controlled loss. Do not chase an equaliser."),
+            stop(f"If it is still 0-0 on 60 minutes: lay {fav_name} at around {f_60:.2f} and exit with a small loss."),
         ]
         rationale = [
             f"Model P({fav_name} win) {p_fav:.1%} (fair {1/p_fav:.2f}) vs {price:.2f}" + (" [exchange]" if is_market else " [model]"),

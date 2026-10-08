@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeScout</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">⚽ TradeScout</div>
+  <div class="datebar">
+    <button id="prev" title="Previous day">‹</button>
+    <input type="date" id="date">
+    <button id="next" title="Next day">›</button>
+    <button id="today" class="ghost">Today</button>
+    <button id="go" class="primary">Scan this day</button>
+  </div>
+  <div class="status" id="status"></div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-view="matches">Matches</button>
+  <button class="tab" data-view="picks">Top picks</button>
+  <button class="tab" data-view="strategies">By strategy</button>
+  <button class="tab" data-view="help">How to use</button>
+</nav>
+
+<main>
+  <section id="view-matches" class="view active">
+    <div class="split">
+      <aside class="list">
+        <div class="filters">
+          <input id="search" placeholder="Search team…">
+          <select id="leagueFilter"><option value="">All leagues</option></select>
+          <select id="sort">
+            <option value="score">Sort: best score</option>
+            <option value="time">Sort: kick-off</option>
+            <option value="goals">Sort: most goals expected</option>
+          </select>
+        </div>
+        <div id="matchList"></div>
+      </aside>
+      <article class="detail" id="detail">
+        <div class="empty">Pick a date and press <b>Scan this day</b>, then click a match.</div>
+      </article>
+    </div>
+  </section>
+
+  <section id="view-picks" class="view">
+    <div class="toolbar">
+      <label>Show <select id="picksCount"><option>5</option><option selected>10</option><option>20</option></select> best ideas,</label>
+      <label><input type="checkbox" id="picksPerMatch" checked> one per match,</label>
+      <label>ranked by <select id="picksSort"><option value="score">score</option><option value="hit">chance of paying off</option><option value="roi">expected return</option><option value="edge">market edge</option></select></label>
+    </div>
+    <div id="picks"></div>
+  </section>
+
+  <section id="view-strategies" class="view">
+    <div class="toolbar"><label>Strategy <select id="stratSelect"></select></label></div>
+    <div id="stratInfo" class="card"></div>
+    <div id="stratList"></div>
+  </section>
+
+  <section id="view-help" class="view">
+    <div class="card prose">
+      <h2>How to use TradeScout</h2>
+      <ol>
+        <li><b>Pick a day</b> at the top and press <b>Scan this day</b>. Any day works: today, this weekend, or a past Saturday to see how the picks did.</li>
+        <li><b>Matches</b> lists every fixture with its best score. Click one for the full breakdown: the model's view of the match, then every strategy that fits with a step-by-step plan.</li>
+        <li><b>Top picks</b> is the ranked shortlist across the whole day. Start here each morning.</li>
+        <li><b>By strategy</b> answers "which matches suit lay-the-draw today?" and tells you when a strategy should and should not be used.</li>
+      </ol>
+      <h3>Reading a plan</h3>
+      <p>Each plan is split into <span class="ph entry">Before kick-off</span> (what to place and at what price), <span class="ph inplay">In play</span> (what to wait for), <span class="ph exit">Get out</span> (how to take profit) and <span class="ph stop">Stop loss</span> (when to cut and run). The "Why" section is the model's reasoning in plain words. The scenario table shows every way the match can go, how likely it is, and what you make or lose in each case.</p>
+      <h3>The numbers</h3>
+      <ul>
+        <li><b>Score</b> 0-100. 50 is break-even after costs. Green at 60+, amber 50-60, grey below.</li>
+        <li><b>Pays off</b> the probability the plan ends in profit, adjusted by how this strategy has really performed in this league.</li>
+        <li><b>Return</b> expected profit per £1 risked. <b>Stake</b> is a deliberately small suggestion based on your bank.</li>
+        <li><b>Edge</b> how much better the exchange price is than the model's fair price. Only shown when Betfair is connected. This is where profit comes from, so connect Betfair as soon as you are comfortable.</li>
+        <li><b>Confidence</b> how much recent data sits behind both teams. Treat anything under 0.5 with care.</li>
+      </ul>
+      <h3>Rules</h3>
+      <ul>
+        <li>Paper trade first. Scan a few past Saturdays and check the results against the plans.</li>
+        <li>Decide your exit and your stop before kick-off. The plan gives you both.</li>
+        <li>Prices in the plans are what the model expects. Real markets will differ, especially in smaller leagues. Only enter at the price shown or better.</li>
+        <li>This is research, not tips. The in-play decisions are yours.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

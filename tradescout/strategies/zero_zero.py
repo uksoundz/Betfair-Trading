@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
 from ..model.inplay import exit_profit_lay, fair_price
-from .base import Scenario, Strategy, StrategyResult
+from .base import Scenario, Strategy, StrategyResult, entry, inplay, stop
 
 EXIT_MINUTE = 70.0
 
@@ -12,6 +12,8 @@ class LayZeroZero(Strategy):
     label = "Lay the 0-0"
     description = ("Lay 0-0 in the Correct Score market. Any goal settles the lay as a full win; "
                    "if it is still 0-0 on 70' close for a loss before the price collapses.")
+    best_for = "High-scoring fixtures where 0-0 is under 8% likely and the 0-0 price is 12 or bigger. High strike rate, small wins."
+    avoid_when = "Low-scoring leagues or cagey derbies where 0-0 is 12%+; the occasional loss then wipes many wins."
     needs_prices = ("correct_scores",)
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
@@ -28,9 +30,9 @@ class LayZeroZero(Strategy):
         hit = p_goal
         edge = self.edge_lay(p00, price) if is_market else None
         plan = [
-            f"Pre-match: lay Correct Score 0-0 at ~{price:.1f} (liability = 1 unit).",
-            "First goal: the position is a full win, nothing to do.",
-            f"0-0 on 70': back 0-0 at ~{z70:.1f} to cap the loss.",
+            entry(f"Before kick-off: lay Correct Score 0-0 at around {price:.1f}. Your liability is the unit you are risking; the win is the lay stake."),
+            inplay("First goal, from either side: the trade is won in full. Nothing more to do."),
+            stop(f"If it is still 0-0 on 70 minutes: back 0-0 at around {z70:.1f} to cap the loss before the price collapses further."),
         ]
         rationale = [
             f"Model P(0-0) {p00:.1%} (fair {1/p00:.1f}) vs {price:.1f}" + (" [exchange]" if is_market else " [model]"),
