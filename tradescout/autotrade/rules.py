@@ -8,6 +8,8 @@ is a plain dict so it can be stored with an armed job and shown back to the user
 Conditions read the match state (minute, score, who scored first, sets) and live prices:
     goals_at_least n | goals_at_most n | minute_at_least m | minute_before m | first_goal by fav|dog
     set_won set by fav|dog | set_tiebreak set | set_won_easily set by max_games
+    break_point_score max_server_points receiver   (tennis: the receiver is at 40 and the server has at most that many
+                                       points, e.g. 1 = 15-40 or 0-40; receiver any|fav|dog; never in a tiebreak)
     price_ratio_at_most leg ratio      (the leg's selection now backs at <= ratio x the entry price)
     price_not_worse_than_entry leg     (scale-in only when the price has moved our way or stayed)
     all of [...] | any of [...]
@@ -17,6 +19,10 @@ Actions act on one leg of the plan (its market and selection):
     free_bet leg  lay off the original back stake: no loss if it fails, profit if it lands
     scale_in leg fraction   add the same bet, fraction of the plan's unit, at the price now on offer
     hold          nothing to do; the leg runs to the result
+    scalp side role fraction max_cycles
+                  a repeating in-play trade with no pre-match bet (tennis break points): whenever the rule's condition
+                  holds in a new game, back (or lay) the player in `role` (receiver|server) with `fraction` of the unit,
+                  then close it with a green up as soon as that game ends or reaches deuce; at most `max_cycles` times
     enter leg side limit fraction valid_seconds
                   open the position in play (plans with no pre-match bet): a limit order at the plan's own value
                   limit (the most for a lay, the least for a back), sized as `fraction` of the unit (a liability for
@@ -61,6 +67,10 @@ def set_won_easily(set_no: int, by: str, max_games: int) -> dict:
     return {"t": "set_won_easily", "set": set_no, "by": by, "max": max_games}
 
 
+def break_point_score(max_server_points: int = 1, receiver: str = "any") -> dict:
+    return {"t": "break_point_score", "max": max_server_points, "receiver": receiver}
+
+
 def price_ratio_at_most(leg: int, ratio: float) -> dict:
     return {"t": "price_ratio_at_most", "leg": leg, "ratio": ratio}
 
@@ -97,6 +107,10 @@ def enter(leg: int, side: str, limit: float, fraction: float = 1.0, valid_second
     return {"a": "enter", "leg": leg, "side": side, "limit": round(float(limit), 2), "fraction": fraction, "valid_seconds": valid_seconds}
 
 
+def scalp(side: str = "back", role: str = "receiver", fraction: float = 0.25, max_cycles: int = 6) -> dict:
+    return {"a": "scalp", "side": side, "role": role, "fraction": fraction, "max_cycles": max_cycles}
+
+
 def rule(rid: str, when: dict, do: dict, text: str, final: bool = False) -> dict:
     """A protective exit tied to the clock (e.g. "still 0-0 on 70': close") still fires when the score feed
     is down, because a missed goal-triggered exit would already have greened the position; firing late
@@ -107,7 +121,7 @@ def rule(rid: str, when: dict, do: dict, text: str, final: bool = False) -> dict
 
 
 # ------------------------------------------------------------------ evaluation
-NEEDS_SCORE = {"goals_at_least", "goals_at_most", "first_goal", "set_won", "set_tiebreak", "set_won_easily"}
+NEEDS_SCORE = {"goals_at_least", "goals_at_most", "first_goal", "set_won", "set_tiebreak", "set_won_easily", "break_point_score"}
 NEEDS_CLOCK = {"minute_at_least", "minute_before"}
 
 
@@ -186,6 +200,16 @@ def evaluate(cond: dict, state: dict, assume_score: bool = False) -> bool | None
         if sets is None or i >= len(sets):
             return None
         return won and min(sets[i]) <= cond["max"]
+    if t == "break_point_score":
+        pts, server = state.get("points"), state.get("server")
+        if not pts or server not in ("home", "away") or state.get("tiebreak"):
+            return None
+        s_pts, r_pts = (pts[0], pts[1]) if server == "home" else (pts[1], pts[0])
+        receiver = "away" if server == "home" else "home"
+        who = cond.get("receiver", "any")
+        if who != "any" and (receiver == fav) != (who == "fav"):
+            return False
+        return r_pts == 3 and s_pts <= cond.get("max", 1)
     if t in ("price_ratio_at_most", "price_not_worse_than_entry"):
         p = (state.get("prices") or {}).get(cond["leg"])
         if not p:
@@ -218,6 +242,8 @@ def describe_condition(c: dict, names: dict[str, Any]) -> str:
         "set_won_easily": lambda: f"{fav if c.get('by') == 'fav' else dog} win set {c.get('set')} conceding {c.get('max')} games or fewer",
         "price_ratio_at_most": lambda: f"the price has fallen to {c.get('ratio'):.0%} of the entry price or less",
         "price_not_worse_than_entry": lambda: "the price is no worse than at entry",
+        "break_point_score": lambda: ("the score in a game reaches " + ("15-40 or 0-40" if c.get("max", 1) == 1 else "0-40" if c.get("max") == 0 else "30-40, 15-40 or 0-40")
+                                      + " against the server" + ({"fav": f" while {fav} is receiving", "dog": f" while {dog} is receiving"}.get(c.get("receiver"), ""))),
     }.get(t, lambda: t)()
 
 
@@ -230,6 +256,9 @@ def describe_action(a: dict, legs: list[dict]) -> str:
         return f"{opp} {what} at the best price on offer so the result is the same whatever happens (green up, or close for the smaller loss)"
     if kind == "free_bet":
         return f"lay {what} for the original stake: nothing lost if it fails, profit if it lands"
+    if kind == "scalp":
+        return (f"{a.get('side', 'back')} the {a.get('role', 'receiver')} in Match Odds with {a.get('fraction', 0.25):.0%} of the plan stake, then green up "
+                f"as soon as that game is broken or reaches deuce (or is held); repeats in later games, at most {a.get('max_cycles', 6)} times")
     if kind == "enter":
         lim = "or lower" if a.get("side") == "lay" else "or higher"
         risk = "liability" if a.get("side") == "lay" else "stake"

@@ -101,4 +101,6 @@ def test_scan_and_names(tprov):
     assert m.resolve("N Djokovic") == "Novak Djokovic" and m.resolve("Alcaraz") == "Carlos Alcaraz" and m.same("C Alcaraz", "Carlos Alcaraz")
     assert classify_competition("ATP Paris Masters 2026") == ("atp.1000", 3)
     assert classify_competition("Wimbledon 2026 Men's Singles") == ("atp.gs", 5)
-    assert classify_competition("WTA Rome") is None and classify_competition("Challenger Lyon") is None
+    assert classify_competition("WTA Rome") == ("wta.tour", 3) and classify_competition("WTA 1000 Beijing") == ("wta.1000", 3)
+    assert classify_competition("Wimbledon 2026 Women's Singles") == ("wta.gs", 3)
+    assert classify_competition("Challenger Lyon") is None and classify_competition("WTA Rome Doubles") is None

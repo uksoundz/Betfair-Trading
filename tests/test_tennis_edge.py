@@ -16,10 +16,10 @@ from tradescout.value import Quote, net_ev
 DAY = date(2026, 10, 10)
 
 
-def _fc(best_of=3):
+def _fc(best_of=3, tour="atp"):
     from tradescout.tennis.elo import TennisElo
     from tradescout.tennis.forecast import TennisForecaster
-    fx = Fixture(DAY, "atp.500", "Home Player", "Away Player", None, "t1", {"sport": "tennis", "surface": "Hard", "best_of": best_of})
+    fx = Fixture(DAY, f"{tour}.500", "Home Player", "Away Player", None, "t1", {"sport": "tennis", "surface": "Hard", "best_of": best_of, "tour": tour})
     return TennisForecaster(TennisElo()).forecast(fx)
 
 
@@ -105,7 +105,7 @@ def test_lay_after_clear_set_one_loss_is_an_arm_idea_with_a_value_limit():
     assert net_ev(info["p_selection"], info["limit"], "lay", settings.commission) >= 0.03 - 1e-9
     enter = next(x for x in r.rules if x["do"]["a"] == "enter")
     assert enter["when"] == {"t": "set_won_easily", "set": 1, "by": "dog", "max": 3} and enter["do"]["limit"] == info["limit"] and enter["final"]
-    assert [x["id"] for x in r.rules] == ["lost_set1_clear", "fav_won_set1", "lost_set1_close"]
+    assert [x["id"] for x in r.rules] == ["lost_set1_clear", "lost_set1_close", "fav_won_set1"]  # ATP: the narrow-loss branch is not traded
     idea = Scorer(Calibration()).score(fc.fixture, fc, s, r, prices=prices, sport="tennis")
     assert idea.decision == "ARM" and idea.fav == "away" and idea.entry == "inplay" and idea.stake_money > 0 and idea.score < 40 and idea.stars == 0
     assert idea.ev_conservative is None  # no edge is claimed before the exchange has offered the price
@@ -126,3 +126,20 @@ def test_lay_after_set_one_journal_settlement(tmp_path):
     assert s.settle_entry(E, held) == ("void", 0.0, 0.0)  # armed but never entered: nothing to settle
     j = Journal(path=tmp_path / "j.json")
     assert j.summary()["settled"] == 0
+
+
+def test_wta_uses_its_own_corrections_and_trades_the_narrow_loss_too():
+    w, a = market_view(0.65, 3, tour="wta"), market_view(0.65, 3)
+    assert w.corrected["after_lost_set1_close"] and w.after_lost_set1_clear < w.after_lost_set1_close < w.markov["after_lost_set1"]
+    assert w.markov["after_lost_set1"] != a.markov["after_lost_set1"]  # women's serve averages: a different point model underneath
+    assert market_view(0.65, 5, tour="wta").best_of == 3
+    r = LayFavLostSet1().evaluate(_fc(tour="wta"), _prices(1.5, 1.52, 2.9, 2.96))
+    enters = [x for x in r.rules if x["do"]["a"] == "enter"]
+    assert [x["id"] for x in enters] == ["lost_set1_clear", "lost_set1"] and r.entry_info["limit_close"] > 1 and r.entry_info["tour"] == "wta"
+    assert r.entry_info["limit_close"] < r.entry_info["limit"]  # a narrow loss leaves more comeback chance: a tighter limit
+    assert SetsValue().evaluate(_fc(tour="wta"), _prices(1.5, 1.52, 2.9, 2.96, {"2-0": (2.2, 2.3)})) is not None
+
+
+def test_women_get_only_the_market_anchored_plans():
+    from tradescout.tennis.strategies import TENNIS_STRATEGIES
+    assert {s.key for s in TENNIS_STRATEGIES if "wta" in s.tours} == {"tn_sets_value", "tn_lay_fav_lost_set1"}

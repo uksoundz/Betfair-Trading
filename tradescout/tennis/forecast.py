@@ -138,6 +138,11 @@ class TennisForecaster:
         exp_games = sum(n * p for n, p in games.items())
         p_over = {line: sum(p for n, p in games.items() if n > line) for line in lines}
         conf, notes = self.elo.confidence(fx.home, fx.away, self.elo.fitted_on or fx.date)
+        if fx.meta.get("tour") == "wta":
+            # no women's results in the app: the Elo numbers are placeholders, and only the plans anchored to the exchange's own
+            # match odds (set betting value, lay after set 1) run on women's matches
+            conf, notes = 0.0, ["Women's match: no WTA ratings in the app, so the model figures here are placeholders; only the "
+                                "market-anchored plans (priced from Betfair's match odds) are offered"]
         ra = self.elo.rating_on(fx.home, surface)
         rb = self.elo.rating_on(fx.away, surface)
         return TennisForecast(fx, fx.home, fx.away, surface, best_of, p_a, ra, rb, round(pa_mix, 4), round(pb_mix, 4), p_set1, sets, games,

@@ -230,19 +230,22 @@ class FakeExchange:
         tf = self._tennis_forecaster(day)
         players = TENNIS_PLAYERS[:]
         rnd.shuffle(players)
-        for k in range(0, len(players) - 1, 2):
-            a, b = players[k], players[k + 1]
+        pairs = [(players[k], players[k + 1], "atp") for k in range(0, len(players) - 1, 2)] + [("Iga Swiatek", "Coco Gauff", "wta")]
+        for k2, (a, b, tour) in enumerate(pairs):
+            k = 2 * k2
             ev_id = str(34_000_000 + k + day.toordinal() % 1000 * 100)
-            ko = datetime(day.year, day.month, day.day, 9 + k, 30, tzinfo=timezone.utc)
+            ko = datetime(day.year, day.month, day.day, 9 + k, 30, tzinfo=timezone.utc) if tour == "atp" else datetime(day.year, day.month, day.day, 22, 15, tzinfo=timezone.utc)
             name = f"{betfair_player(a)} v {betfair_player(b)}"
             events.append({"event": {"id": ev_id, "name": name, "countryCode": "CN", "timezone": "GMT", "openDate": ko.strftime("%Y-%m-%dT%H:%M:%S.000Z")},
                            "marketCount": 4, "_sport": "tennis"})
-            if tf is not None:
+            if tour == "wta":  # a women's match: no ratings, plain synthetic prices
+                p_a, p_sets, p_over, p_set1 = 0.66, {"2-0": 0.42, "2-1": 0.24, "0-2": 0.18, "1-2": 0.16}, {20.5: 0.5, 21.5: 0.45}, 0.62
+            elif tf is not None:
                 fc = tf.forecast(Fixture(day, "atp.1000", a, b, ko.replace(tzinfo=None), f"bf:{ev_id}", {"surface": "Hard", "best_of": 3, "tourney": "ATP Shanghai Masters 2026", "sport": "tennis"}))
                 p_a, p_sets, p_over, p_set1 = fc.p_a, fc.p_sets, fc.p_over, fc.p_set1_a
             else:
                 p_a, p_sets, p_over, p_set1 = 0.6, {"2-0": 0.4, "2-1": 0.2, "0-2": 0.25, "1-2": 0.15}, {22.5: 0.5}, 0.58
-            comp = {"id": "12", "name": "ATP Shanghai Masters 2026"}
+            comp = {"id": "13", "name": "WTA Wuhan Open 2026"} if tour == "wta" else {"id": "12", "name": "ATP Shanghai Masters 2026"}
 
             def add_tmarket(mtype, mname, runners, matched):
                 mid = f"1.{self._next_id}"
@@ -546,9 +549,14 @@ class FakeExchange:
             self._kick_off(pl["event"])
             done = pl["sets"][:-1] if len(pl["sets"]) > 1 else []
             cur = pl["sets"][-1]
+            lab = ["0", "15", "30", "40", "A"]
+            pts = pl.get("points")  # [home, away] point counts in the current game, optional
+            srv = pl.get("server")  # "home" | "away", optional
             self.tennis_scores[ev] = {"eventId": int(ev), "status": "IN_PLAY", "score": {
-                "home": {"sets": str(pl["set_counts"][0]), "games": str(cur[0]), "gameSequence": [str(x[0]) for x in done]},
-                "away": {"sets": str(pl["set_counts"][1]), "games": str(cur[1]), "gameSequence": [str(x[1]) for x in done]}}}
+                "home": {"sets": str(pl["set_counts"][0]), "games": str(cur[0]), "gameSequence": [str(x[0]) for x in done],
+                         **({"score": lab[min(pts[0], 4)]} if pts else {}), **({"isServing": srv == "home"} if srv else {})},
+                "away": {"sets": str(pl["set_counts"][1]), "games": str(cur[1]), "gameSequence": [str(x[1]) for x in done],
+                         **({"score": lab[min(pts[1], 4)]} if pts else {}), **({"isServing": srv == "away"} if srv else {})}}}
         if "price" in body:  # {"event", "market_type", "runner", "back", "lay", "handicap"}
             pr = body["price"]
             for m in self._all_markets().values():

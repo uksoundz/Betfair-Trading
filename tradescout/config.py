@@ -51,6 +51,13 @@ LEAGUE_LIQUIDITY: dict[str, float] = {
     "atp.250": 0.50,
     "atp.olympics": 0.70,
     "atp.tour": 0.50,
+    # tennis (WTA singles): market-anchored plans only (no women's ratings)
+    "wta.gs": 0.90,
+    "wta.1000": 0.70,
+    "wta.500": 0.55,
+    "wta.250": 0.45,
+    "wta.finals": 0.75,
+    "wta.tour": 0.45,
 }
 DEFAULT_LIQUIDITY = 0.40
 
@@ -71,10 +78,16 @@ LEAGUE_NAMES: dict[str, str] = {
     "atp.finals": "ATP Finals",
     "atp.olympics": "Olympics",
     "atp.tour": "ATP Tour",
+    "wta.gs": "Grand Slam (women)",
+    "wta.1000": "WTA 1000",
+    "wta.500": "WTA 500",
+    "wta.250": "WTA 250",
+    "wta.finals": "WTA Finals",
+    "wta.tour": "WTA Tour",
 }
-SPORTS = {"football": "Football", "tennis": "Tennis (ATP)"}
-FOOTBALL_LEAGUES = [k for k in LEAGUE_NAMES if not k.startswith("atp.")]
-TENNIS_LEAGUES = [k for k in LEAGUE_NAMES if k.startswith("atp.")]
+SPORTS = {"football": "Football", "tennis": "Tennis (ATP + WTA)"}
+FOOTBALL_LEAGUES = [k for k in LEAGUE_NAMES if not k.startswith(("atp.", "wta."))]
+TENNIS_LEAGUES = [k for k in LEAGUE_NAMES if k.startswith(("atp.", "wta."))]
 JOURNAL_PATH = REPO_ROOT / "data" / "journal.json"
 
 

@@ -259,7 +259,7 @@ class AutoTrader:
             if j.last_score_key:
                 j.last_score_change = time.time()
             j.last_score_key = key
-        j.score = {k: state.get(k) for k in ("minute", "home", "away", "first_goal", "sets", "set_winners", "source")}
+        j.score = {k: state.get(k) for k in ("minute", "home", "away", "first_goal", "sets", "set_winners", "points", "server", "source")}
         self._cancel_engine_unmatched(j)
         sent_before = (j.orders_sent, len(j.sim_bets))
         try:
@@ -270,8 +270,16 @@ class AutoTrader:
                 j.exposure = {str(i): self._exposure(j, i, after).to_dict() for i in range(len(j.legs))}
 
     def _run_rules(self, bf, j: Job, state: dict, books: dict, exps: list) -> bool:
+        said = False  # a scalp left a message worth showing instead of the generic in-play line
         for r in j.rules:
             if r["id"] in j.fired:
+                continue
+            if (r.get("do") or {}).get("a") == "scalp":
+                busy, msg = self._scalp(bf, j, r, state, books, exps)
+                if msg:
+                    j.status, said = msg, True
+                if busy:
+                    return True  # a scalp in progress takes priority over anything later in the plan
                 continue
             v = R.evaluate(r["when"], state)
             if v is None and r.get("fire_if_score_unknown") and state.get("home") is None and state.get("minute") is not None:
@@ -303,7 +311,7 @@ class AutoTrader:
             if r["do"].get("a") in ("green", "free_bet", "enter"):
                 break  # an exit or entry in progress takes priority over anything later in the plan
         else:
-            if j.state == "live":
+            if j.state == "live" and not said:
                 j.status = self._describe_state(j)
         return True
 
@@ -515,6 +523,84 @@ class AutoTrader:
             return ("done" if out in ("done", "partial") else "wait"), msg
         return "done", f"Unknown action {kind}; ignored."
 
+    def _scalp(self, bf, j: Job, r: dict, state: dict, books: dict, exps: list) -> tuple[bool, str]:
+        """One repeating break-point trade. Idle: when the condition holds in a game not traded yet, back (or lay) the
+        player in the action's role with a fraction of the unit. Open: as soon as that game ends (broken or held) or
+        reaches deuce, green up. Needs live prices to act for you: on a Delayed key a 5% scalp is smaller than the price
+        error, so it only runs in alert or simulate mode there. Returns (busy, status)."""
+        a = r["do"]
+        cyc = j.waits.setdefault(f"scalp:{r['id']}", {"open": False, "n": 0, "games": [], "leg": None, "game": None, "pnl": []})
+        if not cyc["open"]:
+            if cyc["n"] >= int(a.get("max_cycles", 6)):
+                j.fired.append(r["id"])
+                return False, f"Break-point scalps done for this match ({cyc['n']})."
+            if not R.evaluate(r["when"], state) or not state.get("game_key") or state["game_key"] in cyc["games"]:
+                return False, ""
+            server = state.get("server")
+            target = ("away" if server == "home" else "home") if a.get("role", "receiver") == "receiver" else server
+            i = next((k for k, l in enumerate(j.legs) if l.get("selection") == target), None)
+            if i is None:
+                return False, "No market for that player on this plan."
+            leg = j.legs[i]
+            side = a.get("side", "back")
+            stake = round(float(a.get("fraction", 0.25)) * j.unit, 2)
+            cyc["games"].append(state["game_key"])
+            pts = state.get("points") or [0, 0]
+            score = f"{pts[0]}-{pts[1]}"
+            if j.mode == "alert":
+                text = (f"{r['text']} Now ({score} in points, {leg.get('runner_name')} receiving): {side} {leg.get('runner_name')} "
+                        f"about £{stake:.2f}. Green up (Cash Out) as soon as the game is broken, held, or reaches deuce.")
+                j.alerts.append({"ts": _now(), "rule": r["id"], "text": text, "url": BETFAIR_MARKET_URL.format(market_id=leg.get("market_id", ""))})
+                j.note(f"ALERT: {text}")
+                cyc.update(open=True, leg=i, game=state["game_key"], alert=True)
+                return True, f"ALERT: {text}"
+            if j.delayed and not j.simulate:
+                return False, "Break-point scalps need live prices: on a Delayed key use alert mode (you trade with Cash Out) or simulate."
+            book = books.get(leg["market_id"]) or {}
+            if book.get("status") != "OPEN":
+                cyc["games"].pop()
+                return False, "Market suspended: waiting."
+            back, lay = self._runner_book(book, leg)
+            price = back if side == "back" else lay
+            if not price:
+                cyc["games"].pop()
+                return False, "No price on offer for the scalp."
+            size = stake if side == "back" else round(stake / (price - 1), 2)
+            if not min_bet_ok(size, price, jurisdiction=self.jurisdiction()):
+                return False, f"Scalp stake £{size:.2f} is below the exchange minimum; raise the plan stake."
+            if not j.simulate:
+                blocked = self.can_commit(stake)
+                if blocked:
+                    j.fired.append(r["id"])
+                    return False, f"Scalps stopped: {blocked}"
+            out, msg = self._place(bf, j, i, side, price, size, f"sc{cyc['n']}")
+            if out == "wait":
+                cyc["games"].pop()
+                return False, msg
+            cyc.update(open=True, leg=i, game=state["game_key"], alert=False)
+            j.note(f"Scalp {cyc['n'] + 1} in ({score}): {msg}")
+            return True, f"Scalp {cyc['n'] + 1} open: {msg}"
+        # open: close when the game is over, at deuce, or if the score is lost
+        pts = state.get("points")
+        deuce = bool(pts) and pts[0] >= 3 and pts[1] >= 3
+        over = state.get("game_key") != cyc["game"]
+        if not (over or deuce or state.get("tiebreak")):
+            return True, f"Scalp {cyc['n'] + 1} open: waiting for the game to finish or reach deuce."
+        why = "deuce" if (deuce and not over) else "game over"
+        if cyc.get("alert"):
+            leg = j.legs[cyc["leg"]]
+            text = f"Green up now ({why}): Cash Out {leg.get('runner_name')} on Betfair."
+            j.alerts.append({"ts": _now(), "rule": r["id"], "text": text, "url": BETFAIR_MARKET_URL.format(market_id=leg.get("market_id", ""))})
+            j.note(f"ALERT: {text}")
+            cyc.update(open=False, n=cyc["n"] + 1)
+            return False, f"ALERT: {text}"
+        outcome, msg = self._act(bf, j, {"a": "green", "leg": cyc["leg"]}, books, exps, f"scx{cyc['n']}")
+        if outcome != "done":
+            return True, f"Closing scalp {cyc['n'] + 1} ({why}): {msg}"
+        j.note(f"Scalp {cyc['n'] + 1} closed ({why}): {msg}")
+        cyc.update(open=False, n=cyc["n"] + 1)
+        return False, f"Scalp {cyc['n']} closed ({why})."
+
     def _enter(self, bf, j: Job, action: dict, books: dict, exps: list, tag: str) -> tuple[str, str]:
         """Open the position in play with a limit order at the plan's value limit. Works the same on a Delayed key:
         the trigger comes from the live score and the limit is the value test, so no price needs to be read; Betfair
@@ -632,7 +718,7 @@ class AutoTrader:
 
 def _enters_in_play(j: Job) -> bool:
     """Plans with no pre-match bet: the engine opens the position itself on a trigger."""
-    return any((r.get("do") or {}).get("a") == "enter" for r in j.rules)
+    return any((r.get("do") or {}).get("a") in ("enter", "scalp") for r in j.rules)
 
 
 def new_job(**kw) -> Job:

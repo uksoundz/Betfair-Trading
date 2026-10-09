@@ -17,7 +17,7 @@ from ..strategies.base import OrderLeg, Scenario, Strategy, StrategyResult, entr
 from ..value import net_ev
 from .data import TennisResult
 from .forecast import TennisForecast
-from .market_model import lay_limit, market_view, p_fav_from_quotes
+from .market_model import MarketView, holdout_gain, lay_limit, market_view, p_fav_from_quotes
 
 
 def _fav_prices(fc: TennisForecast, prices: MarketPrices) -> tuple:
@@ -259,6 +259,7 @@ SETS_MODEL_WEIGHT = 0.6     # weight of the corrected, match-odds-derived probab
 SETS_CONFIDENCE = 0.85      # validated on a later holdout, but on Pinnacle closing prices, not on today's exchange mid
 LAY_SET1_MARGIN = 0.03      # the in-play limit keeps at least 3% per unit of liability over the validated probability
 LAY_SET1_WINDOW = 120.0     # seconds the entry order stays up after set 1 (roughly the set break)
+CLOSE_BRANCH_MIN_GAIN = 0.002  # trade the narrow-loss branch only where its correction clearly beat the plain model on the holdout
 
 
 def _market_fav(prices: MarketPrices):
@@ -283,6 +284,7 @@ class SetsValue(Strategy):
     avoid_when = "Thin Set Betting books (wide spreads), a player carrying an injury, or a match-odds price that is moving fast."
     inplay = False
     settlement = "exact"
+    tours = ("atp", "wta")
 
     def trade_rules(self) -> list[dict]:
         return []  # a settlement bet: nothing to do in play
@@ -292,7 +294,8 @@ class SetsValue(Strategy):
         if mf is None:
             return None  # every probability here is anchored to the exchange's match odds: without them there is nothing to say
         p_fav, fav = mf
-        view = market_view(p_fav, fc.best_of, fc.surface)
+        tour = fc.fixture.meta.get("tour", "atp")
+        view = market_view(p_fav, fc.best_of, fc.surface, tour=tour)
         probs = view.set_score_home_away(fav)
         best = None
         for key, p in probs.items():
@@ -330,7 +333,8 @@ class SetsValue(Strategy):
             ", ".join(f"{(home if int(k.split('-')[0]) > int(k.split('-')[1]) else away)} {max(map(int, k.split('-')))}-{min(map(int, k.split('-')))} {v:.0%}"
                       for k, v in probs.items()),
             f"{label}: fair {fair:.2f} against {side} {px:.2f} on the exchange; net {ev:+.1%} per unit risked after {settings.commission:.0%} commission before the value engine's shrinkage.",
-            "Correction fitted on 2021-23 ATP closing prices and kept only because it beat the plain model on 2024-25 (data/tennis_market_corrections.json).",
+            ("Correction fitted on 2010-15 WTA closing prices and kept only because it beat the plain model on 2016-19" if tour == "wta" else
+             "Correction fitted on 2021-23 ATP closing prices and kept only because it beat the plain model on 2024-25") + " (data/tennis_market_corrections.json).",
         ]
         warnings = [] if view.corrected.get("straight_fav") else ["No validated straight-sets correction for this format: plain model numbers."]
         if not (fc.p_a >= 0.5) == (fav == "home"):
@@ -345,7 +349,7 @@ class SetsValue(Strategy):
         shaded by the usual overround. The journal settles real picks from their slip (settle_entry)."""
         p_fav = fc.p_fav
         fav = "home" if fc.p_a >= 0.5 else "away"
-        view = market_view(p_fav, fc.best_of, fc.surface)
+        view = market_view(p_fav, fc.best_of, fc.surface, tour=fc.fixture.meta.get("tour", "atp"))
         need = fc.best_of // 2 + 1
         key = f"{need}-0" if fav == "home" else f"0-{need}"
         p = view.set_score_home_away(fav)[key]
@@ -379,24 +383,41 @@ class SetsValue(Strategy):
 
 class LayFavLostSet1(Strategy):
     key = "tn_lay_fav_lost_set1"
-    label = "Lay favourite after a clear first-set loss"
-    description = ("No bet before the match. If the favourite loses the first set 6-3 or wider (best of three), lay the favourite "
-                   "in Match Odds with a limit price that keeps a margin over the validated comeback rate, and hold to the result. "
-                   "Favourites beaten that clearly come back less often than independent-points pricing implies.")
-    best_for = "Best-of-three ATP matches with a liquid match-odds market; the favourite priced 1.3 to 2.0 before the start."
+    label = "Lay favourite after losing the first set"
+    description = ("No bet before the match. If the favourite loses the first set (best of three), lay the favourite in Match Odds "
+                   "with a limit price that keeps a margin over the validated comeback rate, and hold to the result. Favourites "
+                   "who lose set 1 come back less often than independent-points pricing implies, most of all after a clear loss.")
+    best_for = "Best-of-three ATP and WTA matches with a liquid match-odds market; the favourite priced 1.3 to 2.0 before the start."
     avoid_when = "Best of five (no validated correction), a favourite known to start slowly, or a market suspended through the set break."
     inplay = True
     settlement = "approximate"
+    tours = ("atp", "wta")
 
-    def trade_rules(self, limit: float = 0.0) -> list[dict]:
-        rules = [R.rule("fav_won_set1", R.set_won(1, "fav"), R.hold("nothing is placed"), "Favourite wins set 1: no entry; the plan is complete.", final=True)]
+    def trade_rules(self, limit: float = 0.0, limit_close: float = 0.0) -> list[dict]:
+        rules = []
         if limit > 1.0:
-            rules.insert(0, R.rule("lost_set1_clear", R.set_won_easily(1, "dog", 3), R.enter(0, "lay", limit, 1.0, LAY_SET1_WINDOW),
-                                   f"Favourite loses set 1 6-3 or wider: lay the favourite at {limit:.2f} or lower for two minutes.", final=True))
-        rules.append(R.rule("lost_set1_close", R.set_won(1, "dog"), R.hold("the loss was narrow (7-5, 6-4 or a tiebreak), so nothing is placed"), "Favourite loses set 1 narrowly (7-5, 6-4 or a tiebreak): no entry.", final=True))
+            rules.append(R.rule("lost_set1_clear", R.set_won_easily(1, "dog", 3), R.enter(0, "lay", limit, 1.0, LAY_SET1_WINDOW),
+                                f"Favourite loses set 1 6-3 or wider: lay the favourite at {limit:.2f} or lower for two minutes.", final=True))
+        if limit_close > 1.0:
+            rules.append(R.rule("lost_set1", R.set_won(1, "dog"), R.enter(0, "lay", limit_close, 1.0, LAY_SET1_WINDOW),
+                                f"Favourite loses set 1 narrowly: lay the favourite at {limit_close:.2f} or lower for two minutes.", final=True))
+        else:
+            rules.append(R.rule("lost_set1_close", R.set_won(1, "dog"), R.hold("the loss was narrow (7-5, 6-4 or a tiebreak), so nothing is placed"),
+                                "Favourite loses set 1 narrowly (7-5, 6-4 or a tiebreak): no entry.", final=True))
+        rules.append(R.rule("fav_won_set1", R.set_won(1, "fav"), R.hold("nothing is placed"), "Favourite wins set 1: no entry; the plan is complete.", final=True))
         return rules
 
+    @staticmethod
+    def limits(view: "MarketView", tour: str) -> tuple[float, float]:
+        """(limit after a clear loss, limit after a narrow loss or 0 when that branch is not traded)."""
+        clear = round_to_tick(lay_limit(view.after_lost_set1_clear, settings.commission, LAY_SET1_MARGIN), "back")  # snap down
+        close = 0.0
+        if view.corrected.get("after_lost_set1_close") and holdout_gain("after_lost_set1_close", 3, tour) >= CLOSE_BRANCH_MIN_GAIN:
+            close = round_to_tick(lay_limit(view.after_lost_set1_close, settings.commission, LAY_SET1_MARGIN), "back")
+        return clear, close
+
     def evaluate(self, fc: TennisForecast, prices: MarketPrices) -> StrategyResult | None:
+        tour = fc.fixture.meta.get("tour", "atp")
         if fc.best_of != 3:
             return None
         mf = _market_fav(prices)
@@ -405,62 +426,72 @@ class LayFavLostSet1(Strategy):
         p_fav, fav = mf
         if not 0.5 <= p_fav <= 0.78:
             return None  # outside 1.28-2.0 the comeback price is either tiny or the 'favourite' is a coin flip
-        view = market_view(p_fav, 3, fc.surface)
+        view = market_view(p_fav, 3, fc.surface, tour=tour)
         if not view.corrected.get("after_lost_set1_clear"):
             return None
-        q = view.after_lost_set1_clear
-        limit = round_to_tick(lay_limit(q, settings.commission, LAY_SET1_MARGIN), "back")  # snap down: never above the value limit
+        q, q_close = view.after_lost_set1_clear, view.after_lost_set1_close
+        limit, limit_close = self.limits(view, tour)
         m_q = view.markov["after_lost_set1"]
-        # how often the trigger happens: the favourite loses set 1 and concedes 6-3 or wider (roughly half of set-1 losses)
-        p_trigger = (1 - view.p_set1) * 0.5
+        # how often the trigger happens: roughly half of set-1 losses are 6-3 or wider
+        p_lost = 1 - view.p_set1
+        p_trig_clear, p_trig_close = p_lost * 0.5, (p_lost * 0.5 if limit_close else 0.0)
         home, away = fc.fixture.home, fc.fixture.away
         fav_name, dog_name = (home, away) if fav == "home" else (away, home)
-        win_lay = (1 - settings.commission) / (limit - 1)
-        scenarios = [
-            Scenario(f"{fav_name} win set 1 or lose it narrowly: no bet", 1 - p_trigger, 0.0),
-            Scenario(f"{fav_name} lose set 1 6-3 or wider, then lose the match (lay at {limit:.2f} wins)", p_trigger * (1 - q), win_lay),
-            Scenario(f"{fav_name} lose set 1 6-3 or wider, then come back (lay at {limit:.2f} loses)", p_trigger * q, -1.0),
-        ]
+        scenarios = [Scenario(f"{fav_name} win set 1{'' if limit_close else ' or lose it narrowly'}: no bet", 1 - p_trig_clear - p_trig_close, 0.0),
+                     Scenario(f"{fav_name} lose set 1 6-3 or wider, then lose the match (lay at {limit:.2f} wins)", p_trig_clear * (1 - q), (1 - settings.commission) / (limit - 1)),
+                     Scenario(f"{fav_name} lose set 1 6-3 or wider, then come back", p_trig_clear * q, -1.0)]
+        if limit_close:
+            scenarios += [Scenario(f"{fav_name} lose set 1 narrowly, then lose the match (lay at {limit_close:.2f} wins)", p_trig_close * (1 - q_close),
+                                   (1 - settings.commission) / (limit_close - 1)),
+                          Scenario(f"{fav_name} lose set 1 narrowly, then come back", p_trig_close * q_close, -1.0)]
+        tour_txt = "WTA 2010-19 (fitted 2010-15, held up on 2016-19)" if tour == "wta" else "ATP 2021-25 (fitted 2021-23, held up on 2024-25)"
         plan = [
             note("No bet before the match. Arm this plan; TradeScout watches the live score."),
             inplay(f"If {dog_name} take the first set 6-3 or wider: lay {fav_name} in Match Odds at {limit:.2f} or lower, liability = your stake. "
-                  f"The order stays up for two minutes, then any unmatched part is cancelled."),
-            note("Whatever matched runs to the result. No trading out: the edge is in the comeback rate, not in price swings."),
-            stop(f"If {fav_name} win set 1, or lose it 7-5, 6-4 or in a tiebreak: nothing is placed and the plan ends."),
+                   f"The order stays up for two minutes, then any unmatched part is cancelled."),
         ]
+        if limit_close:
+            plan.append(inplay(f"If {dog_name} take the first set narrowly (7-5, 6-4 or a tiebreak): lay {fav_name} at {limit_close:.2f} or lower, same way."))
+        plan += [note("Whatever matched runs to the result. No trading out: the edge is in the comeback rate, not in price swings."),
+                 stop(f"If {fav_name} win set 1{'' if limit_close else ', or lose it 7-5, 6-4 or in a tiebreak'}: nothing is placed and the plan ends.")]
         rationale = [
             f"Exchange match odds: {fav_name} {p_fav:.0%}. Independent-points pricing gives them {m_q:.0%} to win after losing set 1.",
-            f"After a set-1 loss of 6-3 or wider, favourites at this price came back {q:.0%} of the time (ATP 2021-25; the correction fitted on "
-            f"2021-23 held up on 2024-25: a 6-3-or-wider loser came back 27% against 35% from independent points).",
-            f"Lay limit {limit:.2f}: at that price or lower the lay returns at least {LAY_SET1_MARGIN:.0%} per unit of liability after "
-            f"{settings.commission:.0%} commission at the validated {q:.0%}. A fair independent-points price would be about {1 / m_q:.2f}.",
+            f"Validated comeback rate at this price: {q:.0%} after a 6-3-or-wider set-1 loss" + (f", {q_close:.0%} after a narrow one" if limit_close else "")
+            + f" ({tour_txt}).",
+            f"Lay limit {limit:.2f}" + (f" / {limit_close:.2f}" if limit_close else "") + f": at that price or lower the lay returns at least "
+            f"{LAY_SET1_MARGIN:.0%} per unit of liability after {settings.commission:.0%} commission at the validated rate. "
+            f"A fair independent-points price would be about {1 / m_q:.2f}.",
             "Unproven on the exchange: whether Betfair's in-play price after the set offers this limit is measured by your own armed trades.",
         ]
-        summary = (f"Conditional in-play entry: if {fav_name} lose set 1 6-3 or wider, lay them at {limit:.2f} or lower "
-                   f"(validated comeback rate {q:.0%}; the limit keeps a {LAY_SET1_MARGIN:.0%} margin). Arm Auto-trade to let TradeScout watch "
-                   "and place it; nothing is bet before the start.")
-        info = {"market": "MATCH_ODDS", "selection": fav, "side": "lay", "limit": limit, "valid_seconds": LAY_SET1_WINDOW, "p_selection": q,
-                "p_market": m_q, "p_trigger": p_trigger, "p_fav": p_fav, "trigger": "favourite loses set 1 6-3 or wider", "summary": summary}
+        summary = (f"Conditional in-play entry: if {fav_name} lose set 1 6-3 or wider, lay them at {limit:.2f} or lower (validated comeback {q:.0%})"
+                   + (f"; after a narrow loss at {limit_close:.2f} or lower ({q_close:.0%})" if limit_close else "")
+                   + f". The limit keeps a {LAY_SET1_MARGIN:.0%} margin. Arm Auto-trade to let TradeScout watch and place it; nothing is bet before the start.")
+        info = {"market": "MATCH_ODDS", "selection": fav, "side": "lay", "limit": limit, "limit_close": limit_close, "valid_seconds": LAY_SET1_WINDOW,
+                "p_selection": q, "p_market": m_q, "p_trigger": p_trig_clear + p_trig_close, "p_fav": p_fav, "tour": tour,
+                "trigger": "favourite loses set 1" + ("" if limit_close else " 6-3 or wider"), "summary": summary}
         return StrategyResult("Match Odds (in play)", "lay", fav_name, 0, 1 / q, None, None, scenarios, plan, rationale,
-                              orders=[], rules=self.trade_rules(limit), fav=fav, entry="inplay", entry_info=info)
+                              orders=[], rules=self.trade_rules(limit, limit_close), fav=fav, entry="inplay", entry_info=info)
 
     def settle(self, fc: TennisForecast, result: TennisResult) -> tuple[float, float]:
         """Replay settlement with the exchange assumed to price like independent points (a scenario, not evidence):
-        entered only on a clear set-1 loss by the favourite, at the independent-points price plus 2% spread when that
-        is within the limit."""
+        entered on a set-1 loss by the favourite (clear, or narrow where that branch is traded), at the independent-points
+        price plus 2% spread when that is within the limit."""
         if fc.best_of != 3:
             return 0.0, 0.0
         sets = result.sets()
         if not sets:
             return 0.0, 0.0
+        tour = fc.fixture.meta.get("tour", "atp")
         fav_name = fc.fav_name()
         fav_is_winner = result.winner == fav_name
         f1, d1 = (sets[0][0], sets[0][1]) if fav_is_winner else (sets[0][1], sets[0][0])
-        if f1 > d1 or f1 > 3:
+        if f1 > d1:
             return 0.0, 0.0
-        view = market_view(fc.p_fav, 3, fc.surface)
-        q = view.after_lost_set1_clear
-        limit = lay_limit(q, settings.commission, LAY_SET1_MARGIN)
+        view = market_view(fc.p_fav, 3, fc.surface, tour=tour)
+        limit_clear, limit_close = self.limits(view, tour)
+        limit = limit_clear if f1 <= 3 else limit_close
+        if not limit:
+            return 0.0, 0.0
         price = 1.02 / view.markov["after_lost_set1"]
         if price > limit:
             return 0.0, 0.0

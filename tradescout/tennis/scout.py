@@ -15,7 +15,8 @@ from .forecast import TennisForecast, TennisForecaster
 from ..strategies.registry import active_strategies
 from .strategies import TENNIS_STRATEGIES
 
-TENNIS_LIQUIDITY = {"atp.gs": 1.0, "atp.1000": 0.85, "atp.500": 0.65, "atp.finals": 0.9, "atp.250": 0.5, "atp.olympics": 0.7, "atp.tour": 0.5}
+TENNIS_LIQUIDITY = {"atp.gs": 1.0, "atp.1000": 0.85, "atp.500": 0.65, "atp.finals": 0.9, "atp.250": 0.5, "atp.olympics": 0.7, "atp.tour": 0.5,
+                    "wta.gs": 0.9, "wta.1000": 0.7, "wta.500": 0.55, "wta.250": 0.45, "wta.finals": 0.75, "wta.tour": 0.45}
 
 
 class TennisScout:
@@ -47,7 +48,10 @@ class TennisScout:
             if prices.available:
                 source = prices.source
             price_status[fx.label] = prices.diagnostics()
+            tour = fx.meta.get("tour", "atp")
             for strat in self.strategies:
+                if tour not in getattr(strat, "tours", ("atp",)):
+                    continue
                 r = strat.evaluate(fc, prices)
                 if r is None:
                     continue

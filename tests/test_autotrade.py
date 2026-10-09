@@ -395,6 +395,80 @@ def test_inplay_entry_simulate_and_alert(bf, fake, tmp_path):
     assert len(ex.orders) == n and job2.alerts and "lay" in job2.alerts[0]["text"] and "3.00 or lower" in job2.alerts[0]["text"]
 
 
+def _scalp_job(bf, k, simulate=False, mode="auto", receiver="any"):
+    from tradescout.data.betfair_tennis import BetfairTennis
+    from tradescout.tennis.data import TennisProvider
+    bt = BetfairTennis(bf, TennisProvider())
+    fx = bt.fixtures(DAY)[k]
+    legs = []
+    for sel in ("home", "away"):
+        full = bt.resolve_full(fx, "MATCH_ODDS", sel)
+        legs.append({"market": "MATCH_ODDS", "market_label": "Match Odds", "market_id": full["market_id"], "selection": sel,
+                     "selection_id": full["selection_id"], "handicap": 0.0, "side": "back", "entry_price": full["best_back"], "size": 0.0,
+                     "runner_name": full["runner_name"]})
+    rules = [R.rule("bp", R.break_point_score(1, receiver), R.scalp("back", "receiver", 0.5, 3), "15-40 or 0-40: back the receiver.")]
+    job = new_job(entry_id=f"scalp-{k}", sport="tennis", date=DAY.isoformat(), home=fx.home, away=fx.away, fav="home", strategy="tn_bp_scalp",
+                  strategy_label="Break-point scalp", event_id=str(fx.fixture_id)[3:], legs=legs, rules=rules, unit=10.0, max_liability=10.01,
+                  simulate=simulate, mode=mode)
+    return job, fx.meta["betfair_names"][0] + " v " + fx.meta["betfair_names"][1], fx
+
+
+def test_break_point_scalp_backs_the_receiver_and_greens_after_the_game(bf, fake, tmp_path):
+    url, ex = fake
+    t = _trader(bf, tmp_path)
+    job, name, fx = _scalp_job(bf, 0)
+    t.arm(job)
+    a, b = fx.meta["betfair_names"]
+    ex.control({"price": {"event": name, "market_type": "MATCH_ODDS", "runner": b, "back": 3.0, "lay": 3.05}})
+    ex.control({"play_tennis": {"event": name, "sets": [[1, 1]], "set_counts": [0, 0], "points": [1, 2], "server": "home"}})
+    n = len(ex.orders)
+    t.tick()
+    assert job.state == "live" and len(ex.orders) == n  # 15-30: nothing yet
+    ex.control({"play_tennis": {"event": name, "sets": [[1, 1]], "set_counts": [0, 0], "points": [1, 3], "server": "home"}})
+    t.tick()
+    sent = ex.orders[n:]
+    assert len(sent) == 1 and sent[0]["side"] == "BACK" and sent[0]["selectionId"] == job.legs[1]["selection_id"] and sent[0]["priceSize"]["size"] == 5.0
+    t.tick()
+    assert len(ex.orders) == n + 1  # still the same game: holds the position
+    # the receiver breaks: their price shortens; the engine greens up
+    ex.control({"price": {"event": name, "market_type": "MATCH_ODDS", "runner": b, "back": 2.5, "lay": 2.52}})
+    ex.control({"play_tennis": {"event": name, "sets": [[1, 2]], "set_counts": [0, 0], "points": [0, 0], "server": "away"}})
+    t.tick()
+    assert len(ex.orders) == n + 2 and ex.orders[-1]["side"] == "LAY"
+    exp = P.exposure([o for o in ex.orders if o["betId"] in job.bet_ids], job.legs[1]["selection_id"])
+    assert abs(exp.win - exp.lose) < 0.1 and exp.worst > 0 and job.state == "live"
+    cyc = job.waits["scalp:bp"]
+    assert cyc["n"] == 1 and not cyc["open"]
+    # the same game is never traded twice; a new 15-40 later is, and deuce closes it
+    ex.control({"play_tennis": {"event": name, "sets": [[1, 2]], "set_counts": [0, 0], "points": [3, 1], "server": "away"}})
+    t.tick()
+    assert len(ex.orders) == n + 3 and ex.orders[-1]["selectionId"] == job.legs[0]["selection_id"]  # home now receiving
+    ex.control({"play_tennis": {"event": name, "sets": [[1, 2]], "set_counts": [0, 0], "points": [3, 3], "server": "away"}})
+    t.tick()
+    assert len(ex.orders) == n + 4 and job.waits["scalp:bp"]["n"] == 2
+
+
+def test_break_point_scalp_alert_mode_and_delayed_key(bf, fake, tmp_path):
+    url, ex = fake
+    t = _trader(bf, tmp_path)
+    job, name, fx = _scalp_job(bf, 2, mode="alert")
+    t.arm(job)
+    n = len(ex.orders)
+    ex.control({"play_tennis": {"event": name, "sets": [[2, 2]], "set_counts": [0, 0], "points": [3, 0], "server": "away"}})  # 0-40 on the away serve
+    t.tick()
+    assert len(ex.orders) == n and "back" in job.alerts[-1]["text"] and fx.meta["betfair_names"][0] in job.alerts[-1]["text"]
+    ex.control({"play_tennis": {"event": name, "sets": [[3, 2]], "set_counts": [0, 0], "points": [0, 0], "server": "home"}})
+    t.tick()
+    assert "Green up now" in job.alerts[-1]["text"] and len(ex.orders) == n
+    # acting for you on a Delayed key is refused: a 5% scalp is smaller than a three-minute-old price
+    ex.control({"delayed": True})
+    job2, name2, fx2 = _scalp_job(bf, 3)
+    t.arm(job2)
+    ex.control({"play_tennis": {"event": name2, "sets": [[0, 0]], "set_counts": [0, 0], "points": [1, 3], "server": "home"}})
+    t.tick()
+    assert len(ex.orders) == n and "need live prices" in job2.status
+
+
 # ------------------------------------------------------------------ delayed application key
 def test_delayed_key_hedges_at_the_real_price_not_the_stale_one(bf, fake, fixtures, tmp_path, monkeypatch):
     import tradescout.autotrade.engine as eng

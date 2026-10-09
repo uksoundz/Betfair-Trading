@@ -177,5 +177,111 @@
     "holdout_mean_actual": 0.6534
    }
   }
+ },
+ "tours": {
+  "wta": {
+   "source": "tennis-data.co.uk WTA closing odds (Pinnacle) with set scores",
+   "dev": [
+    2010,
+    2015
+   ],
+   "holdout": [
+    2016,
+    2019
+   ],
+   "targets": {
+    "after_lost_set1": {
+     "3": {
+      "a": -0.2705493887285895,
+      "b": 1.090158576626836,
+      "validated": true,
+      "n_dev": 4813,
+      "n_holdout": 3430,
+      "holdout_logloss_model": 0.5907,
+      "holdout_logloss_corrected": 0.5793,
+      "holdout_mean_model": 0.3579,
+      "holdout_mean_actual": 0.2883
+     }
+    },
+    "after_lost_set1_clear": {
+     "3": {
+      "a": -0.3093842300206222,
+      "b": 1.0601145672698993,
+      "validated": true,
+      "n_dev": 2430,
+      "n_holdout": 1723,
+      "holdout_logloss_model": 0.5748,
+      "holdout_logloss_corrected": 0.5595,
+      "holdout_mean_model": 0.3529,
+      "holdout_mean_actual": 0.2652
+     }
+    },
+    "after_lost_set1_close": {
+     "3": {
+      "a": -0.2374018599148326,
+      "b": 1.1116579632937071,
+      "validated": true,
+      "n_dev": 2383,
+      "n_holdout": 1707,
+      "holdout_logloss_model": 0.6067,
+      "holdout_logloss_corrected": 0.6016,
+      "holdout_mean_model": 0.363,
+      "holdout_mean_actual": 0.3117
+     }
+    },
+    "after_won_set1": {
+     "3": {
+      "a": 0.18342062505618648,
+      "b": 1.0508922578921303,
+      "validated": true,
+      "n_dev": 9321,
+      "n_holdout": 6123,
+      "holdout_logloss_model": 0.3478,
+      "holdout_logloss_corrected": 0.3445,
+      "holdout_mean_model": 0.8565,
+      "holdout_mean_actual": 0.884
+     }
+    },
+    "straight_fav": {
+     "3": {
+      "a": 0.4472439086493299,
+      "b": 1.2055239809074343,
+      "validated": true,
+      "n_dev": 14134,
+      "n_holdout": 9553,
+      "holdout_logloss_model": 0.6748,
+      "holdout_logloss_corrected": 0.6587,
+      "holdout_mean_model": 0.3876,
+      "holdout_mean_actual": 0.4716
+     }
+    },
+    "straight_dog": {
+     "3": {
+      "a": 0.5127562279595355,
+      "b": 1.1383416250530765,
+      "validated": true,
+      "n_dev": 14134,
+      "n_holdout": 9553,
+      "holdout_logloss_model": 0.4717,
+      "holdout_logloss_corrected": 0.4656,
+      "holdout_mean_model": 0.1529,
+      "holdout_mean_actual": 0.1918
+     }
+    },
+    "set1_fav": {
+     "3": {
+      "a": -0.05985995832726497,
+      "b": 1.3330230536733243,
+      "validated": true,
+      "n_dev": 14134,
+      "n_holdout": 9553,
+      "holdout_logloss_model": 0.6313,
+      "holdout_logloss_corrected": 0.6285,
+      "holdout_mean_model": 0.6174,
+      "holdout_mean_actual": 0.641
+     }
+    }
+   }
+  }
  }
 }

@@ -13,6 +13,8 @@ from __future__ import annotations
 from functools import lru_cache
 
 TOUR_SERVE_AVG = {"Hard": 0.64, "Clay": 0.62, "Grass": 0.66, "Carpet": 0.65}
+# women's tour: servers win fewer points, so breaks are far more common (checked on Grand Slam point-by-point data)
+WTA_SERVE_AVG = {"Hard": 0.565, "Clay": 0.55, "Grass": 0.585, "Carpet": 0.57}
 
 
 # ----------------------------------------------------------------------------- game / tiebreak
@@ -196,9 +198,9 @@ def p_first_break(pa: float, pb: float, first_server: str = "A") -> tuple[float,
     return pA, pB
 
 
-def solve_serve_probs(p_match: float, best_of: int, surface: str = "Hard") -> tuple[float, float]:
+def solve_serve_probs(p_match: float, best_of: int, surface: str = "Hard", tour: str = "atp") -> tuple[float, float]:
     """Find (pa, pb) with pa + pb = 2 * tour average such that the Markov match probability equals p_match."""
-    avg = TOUR_SERVE_AVG.get(surface, 0.64)
+    avg = (WTA_SERVE_AVG if tour == "wta" else TOUR_SERVE_AVG).get(surface, 0.565 if tour == "wta" else 0.64)
     lo, hi = -0.25, 0.25
     for _ in range(40):
         mid = (lo + hi) / 2

@@ -9,6 +9,10 @@ per quantity and format on a development window, scores it on a later holdout wi
 everything for use. The fitted numbers and the holdout evidence go to data/tennis_market_corrections.json.
 
     python -m tradescout.eval.tennis_market_fit /path/to/folder/with/2021.xlsx ... 2025.xlsx
+    python -m tradescout.eval.tennis_market_fit /path/to/df_wta.csv --tour wta --dev 2010-2015 --holdout 2016-2019
+
+The second form fits the women's tour (tennis-data.co.uk WTA files, here as one CSV) into the same file
+under "tours": {"wta": ...}; the men's numbers stay where they are.
 """
 from __future__ import annotations
 
@@ -36,11 +40,13 @@ def _sg(x):
     return 1 / (1 + np.exp(-x))
 
 
-def load(folder: Path) -> pd.DataFrame:
+def load(path: Path) -> pd.DataFrame:
+    path = Path(path)
+    files = [path] if path.is_file() else sorted(list(path.glob("*.xlsx")) + list(path.glob("*.csv")))
     frames = []
-    for f in sorted(Path(folder).glob("*.xlsx")):
-        x = pd.read_excel(f)
-        x["year"] = pd.to_datetime(x["Date"]).dt.year
+    for f in files:
+        x = pd.read_excel(f) if f.suffix == ".xlsx" else pd.read_csv(f, low_memory=False)
+        x["year"] = pd.to_datetime(x["Date"], errors="coerce").dt.year
         frames.append(x)
     d = pd.concat(frames, ignore_index=True)
     d = d[(d["Comment"] == "Completed") & d["PSW"].notna() & d["PSL"].notna() & d["W1"].notna()].copy()
@@ -60,13 +66,13 @@ def load(folder: Path) -> pd.DataFrame:
     return d
 
 
-def model_columns(d: pd.DataFrame) -> pd.DataFrame:
+def model_columns(d: pd.DataFrame, tour: str = "atp") -> pd.DataFrame:
     cache: dict = {}
     rows = []
     for p, bo, s in zip(d.p_fav, d.bo, d.surface):
         k = (round(float(p), 3), int(bo), s)
         if k not in cache:
-            pa, pb = solve_serve_probs(k[0], k[1], s)
+            pa, pb = solve_serve_probs(k[0], k[1], s, tour)
             need = k[1] // 2 + 1
             md = match_distribution(pa, pb, k[1])
             cache[k] = dict(
@@ -104,19 +110,21 @@ def _ll(x: pd.DataFrame, y: str, m: str, w) -> float:
     return float(-np.mean(yy * np.log(q) + (1 - yy) * np.log(1 - q)))
 
 
-def fit(d: pd.DataFrame) -> dict:
-    d = model_columns(d)
-    out: dict = {"source": "tennis-data.co.uk ATP closing odds (Pinnacle) with set scores", "dev": list(DEV), "holdout": list(HOLD), "targets": {}}
+def fit(d: pd.DataFrame, tour: str = "atp", dev=DEV, hold=HOLD) -> dict:
+    d = model_columns(d, tour)
+    out: dict = {"source": f"tennis-data.co.uk {tour.upper()} closing odds (Pinnacle) with set scores", "dev": list(dev), "holdout": list(hold), "targets": {}}
     for name, (sub, y, m) in TARGETS.items():
         out["targets"][name] = {}
         for bo in (3, 5):
             g = d[sub(d) & (d.bo == bo)]
-            dv = g[(g.year >= DEV[0]) & (g.year <= DEV[1])]
-            hd = g[(g.year >= HOLD[0]) & (g.year <= HOLD[1])]
+            dv = g[(g.year >= dev[0]) & (g.year <= dev[1])]
+            hd = g[(g.year >= hold[0]) & (g.year <= hold[1])]
+            if len(dv) < 200 or len(hd) < 100:
+                continue  # e.g. no best-of-five on the women's tour
             w_dev = _fit(dv, y, m)
             ll_model, ll_corr = _ll(hd, y, m, [0.0, 1.0]), _ll(hd, y, m, w_dev)
             validated = ll_corr < ll_model
-            w_all = _fit(g[(g.year >= DEV[0])], y, m)
+            w_all = _fit(g[(g.year >= dev[0]) & (g.year <= hold[1])], y, m)
             out["targets"][name][str(bo)] = {
                 "a": float(w_all[0]) if validated else 0.0, "b": float(w_all[1]) if validated else 1.0, "validated": bool(validated),
                 "n_dev": int(len(dv)), "n_holdout": int(len(hd)), "holdout_logloss_model": round(ll_model, 4), "holdout_logloss_corrected": round(ll_corr, 4),
@@ -125,12 +133,27 @@ def fit(d: pd.DataFrame) -> dict:
 
 
 def main(argv=None) -> int:
+    import argparse
     argv = argv if argv is not None else sys.argv[1:]
     if not argv:
         print(__doc__)
         return 1
-    res = fit(load(Path(argv[0])))
-    OUT.write_text(json.dumps(res, indent=1))
+    ap = argparse.ArgumentParser()
+    ap.add_argument("path")
+    ap.add_argument("--tour", default="atp", choices=["atp", "wta"])
+    ap.add_argument("--dev", default=f"{DEV[0]}-{DEV[1]}")
+    ap.add_argument("--holdout", default=f"{HOLD[0]}-{HOLD[1]}")
+    a = ap.parse_args(argv)
+    dev = tuple(int(x) for x in a.dev.split("-"))
+    hold = tuple(int(x) for x in a.holdout.split("-"))
+    res = fit(load(Path(a.path)), a.tour, dev, hold)
+    existing = json.loads(OUT.read_text()) if OUT.exists() else {}
+    if a.tour == "atp":
+        res["tours"] = existing.get("tours", {})
+        OUT.write_text(json.dumps(res, indent=1))
+    else:
+        existing.setdefault("tours", {})[a.tour] = res
+        OUT.write_text(json.dumps(existing, indent=1))
     for name, v in res["targets"].items():
         for bo, r in v.items():
             print(f"{name:16s} best of {bo}: model {r['holdout_mean_model']:.3f} actual {r['holdout_mean_actual']:.3f} "

@@ -24,6 +24,20 @@ def _int(x) -> Optional[int]:
         return None
 
 
+POINT_STEPS = {"0": 0, "00": 0, "love": 0, "15": 1, "30": 2, "40": 3, "a": 4, "ad": 4, "adv": 4}
+
+
+def _point(x) -> Optional[int]:
+    """Points won in the current game as a count: 0, 1, 2, 3 (40), 4 (advantage). Tiebreak counts pass through as numbers
+    above 3 only when they are not game-score labels."""
+    if x is None:
+        return None
+    t = str(x).strip().lower()
+    if t == "":
+        return None
+    return POINT_STEPS.get(t, _int(t))
+
+
 class ScoreFeed:
     def __init__(self, timeout: float = 6.0):
         self.base = os.getenv("BETFAIR_SCORES_URL", DEFAULT_SCORES_URL).rstrip("/")
@@ -64,8 +78,15 @@ class ScoreFeed:
             sets = sets + [[cur_h, cur_a]]
         if not winners and hs is not None and as_ is not None and hs + as_ == 1:
             winners = ["home" if hs else "away"]  # first set winner from the set count alone
+        # points in the current game ("0", "15", "30", "40", "A"/"AD", or tiebreak counts) and who is serving, when the
+        # service gives them; point-level rules wait when it does not
+        ph, pa = _point(h.get("score")), _point(a.get("score"))
+        server = "home" if h.get("isServing") is True else "away" if a.get("isServing") is True else None
+        tiebreak = cur_h == 6 and cur_a == 6
         return {"home": hs, "away": as_, "sets": sets or None, "set_winners": winners if (hs is not None) else None,
-                "sets_done": len(winners), "minute": None, "status": t.get("status"), "source": "betfair scores"}
+                "sets_done": len(winners), "minute": None, "status": t.get("status"), "source": "betfair scores",
+                "points": [ph, pa] if (ph is not None and pa is not None) else None, "server": server, "tiebreak": tiebreak,
+                "game_key": f"{len(winners)}:{cur_h}-{cur_a}" if cur_h is not None and cur_a is not None else None}
 
     def states(self, events: Iterable[tuple[str, str]]) -> dict[str, dict]:
         """{event_id: state} for (event_id, sport) pairs. Missing events are simply absent."""

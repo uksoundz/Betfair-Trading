@@ -135,6 +135,7 @@ class Strategy:
     enabled_default: bool = True   # weak or unverifiable strategies ship disabled; users can enable in Settings
     settlement: str = "exact"      # exact (settles on the final result) | approximate (exits modelled, event timing inferred) | unverifiable
     inplay: bool = True            # needs in-play action after entry
+    tours: tuple[str, ...] = ("atp",)  # tennis: which tours the plan is valid for (the Elo-based plans have no women's ratings)
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         raise NotImplementedError

@@ -158,7 +158,8 @@ def test_tennis_exchange_fixtures_prices_and_set_betting_orientation(fake):
     assert pm.same("Alcaraz", "Carlos Alcaraz") and not pm.same("Alcaraz", "Jannik Sinner")
     bt = BetfairTennis(BetfairPrices("testkey", None, "user", "secret"), tp)
     fx = bt.fixtures(DAY)
-    assert len(fx) >= 5 and all(f.fixture_id.startswith("bf:") and f.league == "atp.1000" for f in fx)
+    assert len(fx) >= 5 and all(f.fixture_id.startswith("bf:") and f.league in ("atp.1000", "wta.tour") for f in fx)
+    assert [f.meta["tour"] for f in fx].count("wta") == 1
     per, rep = bt.prices_for_day(fx)
     assert rep.priced == len(fx) and rep.calls <= 2 + -(-len(fx) // 3) + -(-4 * len(fx) // 10)
     f0 = fx[0]

@@ -36,26 +36,35 @@ def _sigmoid(x: float) -> float:
     return 1 / (1 + math.exp(-x))
 
 
-@lru_cache(maxsize=4)
-def _load(path: str) -> dict:
+@lru_cache(maxsize=8)
+def _load(path: str, tour: str = "atp") -> dict:
     p = Path(path)
     if not p.exists():
         return {}
     try:
-        return json.loads(p.read_text()).get("targets", {})
+        data = json.loads(p.read_text())
     except Exception:
         return {}
+    if tour == "atp":
+        return data.get("targets", {})
+    return (data.get("tours", {}).get(tour) or {}).get("targets", {})
 
 
-def correction(name: str, best_of: int, path: Path | str = DEFAULT_PATH) -> Optional[dict]:
-    """The fitted correction for a quantity and format, or None when it is missing or did not validate."""
-    c = _load(str(path)).get(name, {}).get(str(best_of))
+def correction(name: str, best_of: int, path: Path | str = DEFAULT_PATH, tour: str = "atp") -> Optional[dict]:
+    """The fitted correction for a quantity, format and tour, or None when it is missing or did not validate."""
+    c = _load(str(path), tour).get(name, {}).get(str(best_of))
     return c if c and c.get("validated") else None
 
 
-def corrected(name: str, best_of: int, p_model: float, path: Path | str = DEFAULT_PATH) -> tuple[float, bool]:
+def holdout_gain(name: str, best_of: int, tour: str = "atp", path: Path | str = DEFAULT_PATH) -> float:
+    """How much the correction improved holdout log-loss (0 when it did not validate)."""
+    c = correction(name, best_of, path, tour)
+    return float(c["holdout_logloss_model"] - c["holdout_logloss_corrected"]) if c else 0.0
+
+
+def corrected(name: str, best_of: int, p_model: float, path: Path | str = DEFAULT_PATH, tour: str = "atp") -> tuple[float, bool]:
     """(probability, corrected?) - the model value is returned unchanged when there is no validated correction."""
-    c = correction(name, best_of, path)
+    c = correction(name, best_of, path, tour)
     if c is None:
         return p_model, False
     return _sigmoid(c["a"] + c["b"] * _logit(p_model)), True
@@ -82,6 +91,7 @@ class MarketView:
     after_won_set1: float
     after_lost_set1: float
     after_lost_set1_clear: float   # lost set 1 conceding 6-3 or wider
+    after_lost_set1_close: float   # lost set 1 7-5, 6-4 or in a tiebreak
     corrected: dict       # quantity -> whether a validated correction was applied
     markov: dict          # the uncorrected values, for display
 
@@ -93,22 +103,24 @@ class MarketView:
 
 
 @lru_cache(maxsize=2048)
-def _markov(p_fav: float, best_of: int, surface: str) -> dict:
-    pa, pb = solve_serve_probs(p_fav, best_of, surface)
+def _markov(p_fav: float, best_of: int, surface: str, tour: str = "atp") -> dict:
+    pa, pb = solve_serve_probs(p_fav, best_of, surface, tour)
     md = match_distribution(pa, pb, best_of)
     lost = 0.5 * (p_match_from(pa, pb, best_of, 0, 1, 0, 0, "A") + p_match_from(pa, pb, best_of, 0, 1, 0, 0, "B"))
     won = 0.5 * (p_match_from(pa, pb, best_of, 1, 0, 0, 0, "A") + p_match_from(pa, pb, best_of, 1, 0, 0, 0, "B"))
     return {"sets": {f"{a}-{b}": v for (a, b), v in md["sets"].items()}, "p_set1": md["p_set1"], "won": won, "lost": lost}
 
 
-def market_view(p_fav: float, best_of: int = 3, surface: str = "Hard", path: Path | str = DEFAULT_PATH) -> MarketView:
+def market_view(p_fav: float, best_of: int = 3, surface: str = "Hard", path: Path | str = DEFAULT_PATH, tour: str = "atp") -> MarketView:
     p_fav = min(max(float(p_fav), 0.5), 0.98)
-    best_of = 5 if int(best_of) == 5 else 3
-    m = _markov(round(p_fav, 3), best_of, surface if surface in ("Hard", "Clay", "Grass") else "Hard")
+    tour = "wta" if tour == "wta" else "atp"
+    best_of = 3 if tour == "wta" else (5 if int(best_of) == 5 else 3)
+    m = _markov(round(p_fav, 3), best_of, surface if surface in ("Hard", "Clay", "Grass") else "Hard", tour)
+    path = str(path)
     need = best_of // 2 + 1
     s_fav_key, s_dog_key = f"{need}-0", f"0-{need}"
-    s_fav, c1 = corrected("straight_fav", best_of, m["sets"][s_fav_key], path)
-    s_dog, c2 = corrected("straight_dog", best_of, m["sets"][s_dog_key], path)
+    s_fav, c1 = corrected("straight_fav", best_of, m["sets"][s_fav_key], path, tour)
+    s_dog, c2 = corrected("straight_dog", best_of, m["sets"][s_dog_key], path, tour)
     # keep the split consistent with the match price: the favourite's other wins get what is left of p_fav
     s_fav = min(s_fav, p_fav - 0.01)
     s_dog = min(s_dog, 1 - p_fav - 0.005)
@@ -121,14 +133,15 @@ def market_view(p_fav: float, best_of: int = 3, surface: str = "Hard", path: Pat
         for k, v in rest.items():
             sets[k] = total * v / z
     sets[s_dog_key] = s_dog
-    p_set1, c3 = corrected("set1_fav", best_of, m["p_set1"], path)
-    won, c4 = corrected("after_won_set1", best_of, m["won"], path)
-    lost, c5 = corrected("after_lost_set1", best_of, m["lost"], path)
-    lost_clear, c6 = corrected("after_lost_set1_clear", best_of, m["lost"], path)
+    p_set1, c3 = corrected("set1_fav", best_of, m["p_set1"], path, tour)
+    won, c4 = corrected("after_won_set1", best_of, m["won"], path, tour)
+    lost, c5 = corrected("after_lost_set1", best_of, m["lost"], path, tour)
+    lost_clear, c6 = corrected("after_lost_set1_clear", best_of, m["lost"], path, tour)
+    lost_close, c7 = corrected("after_lost_set1_close", best_of, m["lost"], path, tour)
     order = sorted(sets, key=lambda k: (-int(k.split("-")[0]), int(k.split("-")[1])))
-    return MarketView(p_fav, best_of, {k: sets[k] for k in order}, p_set1, won, lost, lost_clear,
+    return MarketView(p_fav, best_of, {k: sets[k] for k in order}, p_set1, won, lost, lost_clear, lost_close,
                       {"straight_fav": c1, "straight_dog": c2, "set1_fav": c3, "after_won_set1": c4, "after_lost_set1": c5,
-                       "after_lost_set1_clear": c6},
+                       "after_lost_set1_clear": c6, "after_lost_set1_close": c7},
                       {"sets": m["sets"], "p_set1": m["p_set1"], "after_won_set1": m["won"], "after_lost_set1": m["lost"]})
 
 

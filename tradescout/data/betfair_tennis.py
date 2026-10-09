@@ -19,7 +19,7 @@ from .matching import fold
 
 TENNIS_EVENT_TYPE = "2"
 GRAND_SLAMS = ("australian open", "roland garros", "french open", "wimbledon", "us open")
-EXCLUDE = ("wta", "itf", "challenger", "doubles", "women", "juniors", "wheelchair", "utr", "exhibition", "boys", "girls", "legends")
+EXCLUDE = ("itf", "challenger", "doubles", "juniors", "wheelchair", "utr", "exhibition", "boys", "girls", "legends")
 MARKET_NAME_TYPES = {"match odds": "MATCH_ODDS", "set betting": "SET_BETTING", "set 1 winner": "SET_1_WINNER", "first set winner": "SET_1_WINNER",
                      "total games": "TOTAL_GAMES"}
 TENNIS_MARKETS = ("MATCH_ODDS", "SET_BETTING", "TOTAL_GAMES", "SET_1_WINNER")
@@ -107,12 +107,21 @@ class PlayerMatcher:
 
 
 def classify_competition(name: str) -> Optional[tuple[str, int]]:
-    """(league code, best_of) for an ATP singles competition name, or None to skip."""
+    """(league code, best_of) for an ATP or WTA singles competition name, or None to skip. Women's matches are
+    priced only by the market-anchored plans (there are no women's ratings in the app)."""
     low = name.lower()
-    if any(x in low for x in EXCLUDE):
+    if any(x in low for x in EXCLUDE) or "mixed" in low:
         return None
+    women = "wta" in low or "women" in low or "ladies" in low
     if any(gs in low for gs in GRAND_SLAMS):
-        return ("atp.gs", 5) if "men" in low or "atp" in low or not any(w in low for w in ("women", "wta")) else None
+        return ("wta.gs", 3) if women else ("atp.gs", 5)
+    if women:
+        if "wta" not in low:
+            return None
+        for key, code in (("1000", "wta.1000"), ("500", "wta.500"), ("250", "wta.250"), ("finals", "wta.finals")):
+            if key in low:
+                return code, 3
+        return "wta.tour", 3
     if "atp" not in low:
         return None
     if "masters" in low or "1000" in low:
@@ -206,7 +215,8 @@ class BetfairTennis:
             home, away = self.matcher.resolve(a.strip()), self.matcher.resolve(b.strip())
             surface = self.provider.surface_for(comp or "", "Hard")
             fx = Fixture(on, league, home, away, ko.replace(tzinfo=None), f"bf:{ev['id']}",
-                         {"surface": surface, "best_of": best_of, "tourney": comp, "sport": "tennis", "betfair_names": (a.strip(), b.strip())})
+                         {"surface": surface, "best_of": best_of, "tourney": comp, "sport": "tennis", "betfair_names": (a.strip(), b.strip()),
+                          "tour": league.split(".")[0]})
             self._fixture_event[fx.fixture_id] = ev["id"]
             out.append(fx)
         out.sort(key=lambda f: (f.kickoff, f.league))

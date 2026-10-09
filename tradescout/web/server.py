@@ -202,6 +202,20 @@ def _autotrade_done(job) -> None:
 def _record_inplay_entry(job, e) -> None:
     """A conditional in-play entry has no pre-match slip: once the engine is done, write what it actually matched into
     the pick (live) or what the simulation took (paper), so the journal settles it on the real price and size."""
+    if any((r.get("do") or {}).get("a") == "scalp" for r in job.rules):
+        # scalps are closed with green ups as they go: the result is the level position left on each player (the worst
+        # case is used, so anything left unhedged counts at its loss)
+        cyc = next((v for k, v in job.waits.items() if k.startswith("scalp:") and isinstance(v, dict)), {})
+        if job.mode == "alert" or not cyc.get("n"):
+            return
+        pnl = round(sum(float(x.get("worst") or 0.0) for x in (job.exposure or {}).values()), 2)
+        e.placed = "paper" if job.simulate else "live"
+        e.status = "won" if pnl > 0 else "lost"
+        e.pnl_money = pnl
+        e.pnl_per_unit = round(pnl / job.unit, 4) if job.unit else None
+        e.note = (e.note + "; " if e.note else "") + f"{cyc['n']} scalp(s), net £{pnl:+.2f}"
+        journal.save()
+        return
     if not any((r.get("do") or {}).get("a") == "enter" for r in job.rules) or not job.legs:
         return
     leg = job.legs[0]
@@ -970,30 +984,40 @@ def _job_for_idea(body: ArmIdeaIn) -> tuple:
         if not rt.betfair_ok:
             raise HTTPException(400, "Betfair is not connected.")
     info = idea.entry_info
-    full = client.resolve_full(idea.fixture, info["market"], info["selection"])
-    if not full:
-        raise HTTPException(404, "The favourite's Match Odds market could not be found on the exchange.")
-    limit = float(info["limit"])
-    floor = round(2.0 * (limit - 1) + 0.01, 2) if info["side"] == "lay" else 2.0  # smallest liability whose stake clears the £2 minimum
+    limit = float(info.get("limit") or 0)
+    top = max(limit, float(info.get("limit_close") or 0))
+    if info["side"] == "lay" and top > 1:
+        floor = round(2.0 * (top - 1) + 0.01, 2)  # smallest liability whose stake clears the £2 minimum at any limit
+    else:
+        floor = round(2.0 / float(info.get("fraction", 1.0)), 2)  # each scalp uses a fraction of the stake and must clear £2
     risk = float(body.stake_money) if body.stake_money else max(round(idea.stake_money or 0.0, 2), floor)
-    size = round(risk / (limit - 1), 2) if info["side"] == "lay" else risk
-    leg = {"market": info["market"], "market_label": "Match Odds", "market_id": full["market_id"], "selection": info["selection"],
-           "selection_id": full["selection_id"], "handicap": float(full.get("handicap") or 0.0), "side": info["side"], "entry_price": limit,
-           "size": size, "runner_name": full.get("runner_name")}
+    legs = []
+    for sel in (info.get("legs") or [info["selection"]]):
+        full = client.resolve_full(idea.fixture, info["market"], sel)
+        if not full:
+            raise HTTPException(404, "The Match Odds market could not be found on the exchange.")
+        price = limit if limit > 1 else float(full.get("best_back") or 0)
+        size = round(risk / (limit - 1), 2) if (info["side"] == "lay" and limit > 1) else risk
+        legs.append({"market": info["market"], "market_label": "Match Odds", "market_id": full["market_id"], "selection": sel,
+                     "selection_id": full["selection_id"], "handicap": float(full.get("handicap") or 0.0), "side": info["side"], "entry_price": price,
+                     "size": size, "runner_name": full.get("runner_name")})
     fx = idea.fixture
     event_id = str(fx.fixture_id)[3:] if str(fx.fixture_id or "").startswith("bf:") else None
     job = new_job(entry_id="", sport=sport, date=fx.date.isoformat(), home=fx.home, away=fx.away, fav=idea.fav or "home", strategy=idea.strategy,
-                  strategy_label=idea.strategy_label, event_id=event_id, legs=[leg], rules=list(idea.rules), unit=risk, max_liability=round(risk + 0.01, 2),
+                  strategy_label=idea.strategy_label, event_id=event_id, legs=legs, rules=list(idea.rules), unit=risk, max_liability=round(risk + 0.01, 2),
                   simulate=simulate, market_start=None, bet_ids=[], mode=mode)
     warnings = [info.get("summary", "")]
     if risk < floor:
-        warnings.append(f"A liability of £{risk:.2f} gives a stake under the £2 exchange minimum at {limit:.2f}: the entry would be skipped. Use at least £{floor:.2f}.")
+        warnings.append(f"£{risk:.2f} puts an order under the £2 exchange minimum: entries would be skipped. Use at least £{floor:.2f}.")
     cap = round(rt.limits.max_per_trade * settings.bank, 2)
     if risk > cap + 1e-9:
         warnings.append(f"£{risk:.2f} at risk is above your per-trade cap of £{cap:.2f} ({rt.limits.max_per_trade:.0%} of bank).")
     if not event_id:
         warnings.append("The exchange event could not be identified, so there is no live score: the trigger cannot fire.")
-    if rt.betfair.health.delayed:
+    if rt.betfair.health.delayed and any((r.get("do") or {}).get("a") == "scalp" for r in idea.rules) and mode == "auto" and not simulate:
+        warnings.append("Delayed application key: point-by-point scalps cannot be placed for you (a 5% scalp is smaller than a price up to three minutes "
+                        "old). Use 'Alert me' and trade with Cash Out, or Simulate.")
+    elif rt.betfair.health.delayed:
         warnings.append("Delayed application key: fine for this plan. The trigger is the live score (not delayed) and the limit price is the value test, "
                         "so Betfair matches the order at the real price if it is within the limit; nothing depends on the delayed prices.")
     warnings.append("Evidence: the comeback rate is validated on ATP closing prices (2021-23 fit, 2024-25 holdout). Whether Betfair's in-play price "
