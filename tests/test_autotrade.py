@@ -75,6 +75,15 @@ def bf(fake):
     return BetfairPrices("testkey", None, "user", "secret")
 
 
+@pytest.fixture(autouse=True)
+def live_key(fake):
+    """Most tests run as with a Live application key; the delayed-key tests switch it on themselves."""
+    url, ex = fake
+    ex.control({"delayed": False})
+    yield
+    ex.control({"delayed": False})
+
+
 @pytest.fixture(scope="module")
 def fixtures():
     return OpenFootballProvider().fixtures(DAY)
@@ -292,3 +301,57 @@ def test_tennis_back_to_lay_greens_after_set_one(bf, fake, tmp_path):
     assert job.state == "done" and "set1_won" in job.fired
     exp = P.exposure([o for o in ex.orders if o["betId"] in job.bet_ids], full["selection_id"])
     assert abs(exp.win - exp.lose) < 0.1 and exp.worst > 0
+
+
+# ------------------------------------------------------------------ delayed application key
+def test_delayed_key_hedges_at_the_real_price_not_the_stale_one(bf, fake, fixtures, tmp_path, monkeypatch):
+    import tradescout.autotrade.engine as eng
+    url, ex = fake
+    monkeypatch.setattr(eng, "DELAYED_SETTLE_SECONDS", 0.0)
+    t = _trader(bf, tmp_path)
+    job, name = _enter(bf, fixtures[10], "MATCH_ODDS", "draw", "lay", 60.0, _ltd_rules())
+    t.arm(job)
+    ex.control({"delayed": True})
+    entry = job.legs[0]["entry_price"]
+    # the book still shows the pre-goal draw price; the real market has drifted to 6.0 after the goal
+    ex.control({"price": {"event": name, "market_type": "MATCH_ODDS", "runner": "The Draw", "back": entry - 0.04, "lay": entry, "true_back": 6.0, "true_lay": 6.2}})
+    ex.control({"play": {"event": name, "minute": 30, "home": 1, "away": 0, "first_goal": "home"}})
+    for _ in range(6):
+        t.tick()
+        if job.state == "done":
+            break
+    assert job.state == "done" and job.delayed, job.log
+    mine = [o for o in ex.orders if o["betId"] in job.bet_ids]
+    hedges = mine[1:]
+    assert len(hedges) >= 2 and all(o["averagePriceMatched"] == 6.0 for o in hedges)  # matched at the real price
+    exp = P.exposure(mine, job.legs[0]["selection_id"])
+    assert abs(exp.win - exp.lose) < 2.5 and exp.worst > 0, exp  # green at the real price, not over-hedged
+    assert "real matched price" in " ".join(l["text"] for l in job.log)
+
+
+def test_delayed_key_waits_for_the_market_to_settle_after_a_goal(bf, fake, fixtures, tmp_path):
+    url, ex = fake
+    t = _trader(bf, tmp_path)
+    job, name = _enter(bf, fixtures[11], "MATCH_ODDS", "draw", "lay", 10.0, _ltd_rules())
+    t.arm(job)
+    ex.control({"delayed": True})
+    ex.control({"play": {"event": name, "minute": 20, "home": 0, "away": 0}})
+    t.tick()
+    ex.control({"play": {"event": name, "minute": 21, "home": 1, "away": 0, "first_goal": "home"}})
+    n = len(ex.orders)
+    t.tick()
+    assert len(ex.orders) == n and "letting the market reopen" in job.status
+
+
+def test_alert_mode_tells_instead_of_trading(bf, fake, fixtures, tmp_path):
+    url, ex = fake
+    t = _trader(bf, tmp_path)
+    job, name = _enter(bf, fixtures[12], "MATCH_ODDS", "draw", "lay", 10.0, _ltd_rules())
+    job.mode = "alert"
+    t.arm(job)
+    ex.control({"play": {"event": name, "minute": 40, "home": 0, "away": 1, "first_goal": "away"}})
+    n = len(ex.orders)
+    t.tick()
+    assert len(ex.orders) == n and job.alerts and "Cash Out" in job.alerts[0]["text"] and job.alerts[0]["url"].endswith(job.legs[0]["market_id"])
+    t.tick()
+    assert len(job.alerts) == 1  # one alert per step

@@ -15,7 +15,9 @@ and ranks what is left. Most ideas end as **NO TRADE**. That is the point.
   explicit, logged override on the slip. Nothing is ever sent without a confirmation click.
 * Optional auto-trading of plans you have placed and explicitly armed: the engine follows the plan's
   in-play rules (green up, close at the stop, scale in, free bet) from Betfair's live score and prices,
-  with hedges that can only reduce the worst case, a simulate mode, and disarm / stop-all controls.
+  with hedges that can only reduce the worst case, a simulate mode, and disarm / stop-all controls. Works with
+  the free Delayed application key: hedges find the real price through Betfair's order replies, or an
+  alert mode beeps and links you to Cash Out.
 * The price feed explains itself: how many fixtures the exchange priced, which could not be matched
   to an exchange event and the nearest names, which are in play or suspended, session and key
   state. Sessions renew themselves; prices refresh every minute while the app is open.
@@ -31,7 +33,7 @@ tradescout scan --date 2025-11-08   # football replay in the terminal
 tradescout scan --sport tennis --date 2025-06-02
 tradescout betfair-check            # Betfair login test and, per fixture, the exchange event matched or why not
 tradescout holdout                  # out-of-sample protocol for both sports (writes data/strategy_stats.json)
-pytest                              # 253 tests (incl. the Betfair client, routes, placement and auto-trading against a local stand-in exchange)
+pytest                              # 256 tests (incl. the Betfair client, routes, placement and auto-trading against a local stand-in exchange)
 ```
 
 Windows: `install.bat` then `app.bat`.

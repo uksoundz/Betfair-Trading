@@ -832,6 +832,7 @@ class ArmIn(BaseModel):
     entry_id: str
     simulate: bool = False
     confirm: bool = False
+    mode: str = "auto"  # auto: TradeScout places the orders | alert: TradeScout tells you, you act on Betfair
 
 
 def _job_view(j) -> dict:
@@ -842,7 +843,7 @@ def _job_view(j) -> dict:
     return d
 
 
-def _job_for_entry(entry_id: str, simulate: bool) -> tuple:
+def _job_for_entry(entry_id: str, simulate: bool, mode: str = "auto") -> tuple:
     """Build (without arming) the auto-trade job for a journal entry, or raise with the reason."""
     e = next((x for x in journal.entries if x.id == entry_id), None)
     if e is None:
@@ -903,12 +904,16 @@ def _job_for_entry(entry_id: str, simulate: bool) -> tuple:
     job = new_job(entry_id=e.id, sport=e.sport or "football", date=e.date, home=e.home, away=e.away, fav=fav, strategy=e.strategy,
                   strategy_label=e.strategy_label, event_id=event_id, legs=legs, rules=rules, unit=unit,
                   max_liability=round(unit * 1.0 + 0.01, 2), simulate=simulate, market_start=market_start,
-                  bet_ids=list(e.bet_refs or []))
+                  bet_ids=list(e.bet_refs or []), mode="alert" if mode == "alert" else "auto")
     warnings = []
     if not event_id:
         warnings.append("The exchange event could not be identified, so there is no live score: only rules on the clock and prices can fire.")
     if e.decision and e.decision != "TRADE":
         warnings.append(f"The app's decision on this pick was {e.decision}; you placed it as an override.")
+    if rt.betfair is not None and rt.betfair.health.delayed:
+        warnings.append("Your application key is Delayed (prices up to 3 minutes old). Goals and the clock come from the live score feed and are not delayed. "
+                        "In 'act for me' mode TradeScout finds the real price by trading: a first part of each hedge goes with a protective limit, the real matched "
+                        "price comes back at once, and the rest is sized from it. In 'alert me' mode you act yourself with Cash Out, which uses live prices.")
     return job, names, warnings
 
 
@@ -921,15 +926,15 @@ def autotrade_list():
 
 @app.post("/api/autotrade/preview")
 def autotrade_preview(body: ArmIn):
-    job, names, warnings = _job_for_entry(body.entry_id, body.simulate)
-    return {"job": _job_view(job), "warnings": warnings, "simulate": job.simulate}
+    job, names, warnings = _job_for_entry(body.entry_id, body.simulate, body.mode)
+    return {"job": _job_view(job), "warnings": warnings, "simulate": job.simulate, "delayed": bool(rt.betfair and rt.betfair.health.delayed)}
 
 
 @app.post("/api/autotrade/arm")
 def autotrade_arm(body: ArmIn):
     if not body.confirm:
         raise HTTPException(400, "Arming needs your confirmation.")
-    job, names, warnings = _job_for_entry(body.entry_id, body.simulate)
+    job, names, warnings = _job_for_entry(body.entry_id, body.simulate, body.mode)
     job = autotrader.arm(job)
     return {"ok": True, "job": _job_view(job), "warnings": warnings}
 

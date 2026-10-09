@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-from ..betting import min_bet_ok
+from ..betting import BETFAIR_MARKET_URL, min_bet_ok, round_to_tick
 from . import position as P
 from . import rules as R
 from .scores import ScoreFeed, market_clock
@@ -43,8 +43,17 @@ TICK_IDLE = 15.0         # otherwise (how quickly kick-off is noticed)
 STALE_ORDER_SECONDS = 15.0
 SPREAD_WAIT_LIMIT = 0.15  # (lay - back) / back above this is waited out ...
 SPREAD_WAIT_SECONDS = 60.0  # ... for at most this long, then the action goes ahead at the best price
-MAX_ORDERS_PER_JOB = 12
+MAX_ORDERS_PER_JOB = 20
 ACTIVE = ("armed", "live")
+# Delayed application key (prices 1-180 s old). Decisions come from the live score and the clock, which
+# are not delayed; execution discovers the real price through the order itself: Betfair matches at the
+# best price available (better than the limit if there is one) and reports the real matched price at once.
+DELAYED_SETTLE_SECONDS = 20.0   # after a score change, let the market reopen before the first order
+PROBE_FRACTION = 0.4            # first order of a hedge: this share of the estimated stake
+BAND_FIRST = 0.10               # protective limit this far beyond the delayed price on the first order ...
+BAND_CONFIRMED = 0.04           # ... and this far beyond a real fill price on follow-up orders
+BAND_MAX = 0.25                 # widening after unmatched attempts stops here
+FILL_FRESH_SECONDS = 120.0      # a real fill price is used as the price estimate for this long
 
 
 def _now() -> str:
@@ -68,7 +77,14 @@ class Job:
     unit: float                   # the plan stake (unit risked)
     max_liability: float          # the most this job may ever have at risk
     simulate: bool = False
+    mode: str = "auto"            # auto: place the orders | alert: tell the user, who acts on Betfair (cash out)
     market_start: Optional[str] = None
+    delayed: bool = False         # the exchange flags the price data as delayed (Delayed application key)
+    fills: list = field(default_factory=list)       # [{leg, side, price, size, ts}] real matched prices from order replies
+    bands: dict = field(default_factory=dict)       # action tag -> current protective band
+    alerts: list = field(default_factory=list)      # [{ts, rule, text, url}] in alert mode
+    last_score_change: float = 0.0
+    last_score_key: str = ""
     bet_ids: list = field(default_factory=list)
     fired: list = field(default_factory=list)
     state: str = "armed"          # armed | live | done | stopped | expired | error
@@ -134,7 +150,8 @@ class AutoTrader:
                     return j
             if job.simulate and not job.sim_bets:
                 job.sim_bets = [{"leg": i, "side": l["side"], "price": l["entry_price"], "size": l["size"]} for i, l in enumerate(job.legs)]
-            job.note(("Armed in SIMULATE mode: rules run on live prices, nothing is sent." if job.simulate else "Armed: TradeScout will follow the plan's in-play rules on your Betfair account.")
+            job.note(("Armed in ALERT mode: TradeScout tells you when each step is due; you act on Betfair." if job.mode == "alert" else
+                      "Armed in SIMULATE mode: rules run on live prices, nothing is sent." if job.simulate else "Armed: TradeScout will follow the plan's in-play rules on your Betfair account.")
                      + " Rules: " + " | ".join(r.get("text", "") for r in job.rules))
             self.jobs[job.id] = job
             self.save()
@@ -235,6 +252,12 @@ class AutoTrader:
             self._finish(j, "expired", "The entry was never matched before the start (unmatched orders lapse at kick-off). Nothing to trade.")
             return True
         state = self._match_state(j, score, books)
+        j.delayed = any(b.get("isMarketDataDelayed") for b in books.values())
+        key = f"{state.get('home')}-{state.get('away')}-{len(state.get('set_winners') or [])}"
+        if state.get("home") is not None and key != j.last_score_key:
+            if j.last_score_key:
+                j.last_score_change = time.time()
+            j.last_score_key = key
         j.score = {k: state.get(k) for k in ("minute", "home", "away", "first_goal", "sets", "set_winners", "source")}
         self._cancel_engine_unmatched(j)
         sent_before = (j.orders_sent, len(j.sim_bets))
@@ -255,6 +278,17 @@ class AutoTrader:
                 if v:
                     j.note(f"Score unavailable; protective rule '{r['text']}' fired on the clock alone.")
             if not v:
+                continue
+            if j.mode == "alert" and r["do"].get("a") != "hold":
+                j.fired.append(r["id"])
+                leg = j.legs[r["do"].get("leg", 0)] if j.legs else {}
+                text = f"{r['text']} {self._suggestion(j, r['do'], books, exps)}".strip()
+                j.alerts.append({"ts": _now(), "rule": r["id"], "text": text, "url": BETFAIR_MARKET_URL.format(market_id=leg.get("market_id", ""))})
+                j.note(f"ALERT: {text}")
+                j.status = f"ALERT: {text}"
+                if r.get("final"):
+                    j.status += " (no further steps: the plan is complete once you act)"
+                    return True
                 continue
             outcome, msg = self._act(bf, j, r["do"], books, exps, r["id"])
             if outcome == "done":
@@ -331,6 +365,8 @@ class AutoTrader:
                 except Exception:
                     keep.append(o)
                     continue
+                if o.get("tag") and older_than > 0:  # not matched in time: allow a wider limit next attempt
+                    j.bands[o["tag"]] = min(BAND_MAX, max(j.bands.get(o["tag"], BAND_FIRST), BAND_FIRST) * 1.6)
             else:
                 keep.append(o)
         j.engine_orders = keep
@@ -343,6 +379,29 @@ class AutoTrader:
             self.on_done(j)
         except Exception:
             pass
+
+    def _suggestion(self, j: Job, action: dict, books: dict, exps: list) -> str:
+        """In alert mode: what to do on Betfair, with the stake at the (possibly delayed) prices we can see."""
+        i = action.get("leg", 0)
+        if i >= len(j.legs):
+            return ""
+        leg = j.legs[i]
+        back, lay = self._runner_book(books.get(leg["market_id"]), leg)
+        e = exps[i]
+        h = P.green_up(e, back, lay) if action.get("a") == "green" else P.free_bet(e, lay) if action.get("a") == "free_bet" else None
+        if action.get("a") == "scale_in":
+            return f"Suggested: {leg['side']} {leg.get('runner_name')} again with {action.get('fraction', 0):.0%} of the plan stake (£{action.get('fraction', 0) * j.unit:.2f})."
+        if h is None:
+            return "Use Cash Out on Betfair for this market."
+        return (f"Suggested: Cash Out on Betfair, or {h.side} {leg.get('runner_name')} about £{h.size:.2f} at {h.price:.2f}"
+                + (" (prices up to 3 minutes old: Cash Out uses the live price)." if j.delayed else "."))
+
+    def _recent_fill(self, j: Job, leg_i: int) -> Optional[float]:
+        now = time.time()
+        for f in reversed(j.fills):
+            if f["leg"] == leg_i and now - f["ts"] <= FILL_FRESH_SECONDS:
+                return float(f["price"])
+        return None
 
     def _place(self, bf, j: Job, leg_i: int, side: str, price: float, size: float, tag: str) -> tuple[str, str]:
         leg = j.legs[leg_i]
@@ -361,10 +420,14 @@ class AutoTrader:
         bet = str(r.get("betId"))
         j.bet_ids.append(bet)
         matched = float(r.get("sizeMatched") or 0.0)
+        avg = r.get("averagePriceMatched")
+        if matched > 0 and avg:
+            j.fills.append({"leg": leg_i, "side": side, "price": float(avg), "size": matched, "ts": time.time()})
+        got = f" (matched at {float(avg):.2f})" if matched > 0 and avg and abs(float(avg) - price) > 1e-9 else ""
         if matched + 0.01 < size:
-            j.engine_orders.append({"bet_id": bet, "market_id": leg["market_id"], "placed_at": time.time(), "leg": leg_i})
-            return "partial", f"{side} {leg.get('runner_name')} £{size:.2f} at {price:.2f}: £{matched:.2f} matched so far."
-        return "done", f"{side} {leg.get('runner_name')} £{size:.2f} at {price:.2f}, matched."
+            j.engine_orders.append({"bet_id": bet, "market_id": leg["market_id"], "placed_at": time.time(), "leg": leg_i, "tag": tag})
+            return "partial", f"{side} {leg.get('runner_name')} £{size:.2f} limit {price:.2f}{got}: £{matched:.2f} matched so far."
+        return "done", f"{side} {leg.get('runner_name')} £{size:.2f} limit {price:.2f}{got}, matched."
 
     def _act(self, bf, j: Job, action: dict, books: dict, exps: list, tag: str) -> tuple[str, str]:
         kind = action.get("a")
@@ -388,6 +451,8 @@ class AutoTrader:
                 return "wait", "Unmatched entry money is still waiting on this selection; it lapses or matches first."
             j.engine_orders = [o for o in j.engine_orders if o["leg"] != i]
             return "wait", "Cancelled unmatched orders before hedging."
+        if kind in ("green", "free_bet") and j.delayed and not j.simulate:
+            return self._hedge_delayed(bf, j, kind, i, e, back, lay, tag)
         if kind in ("green", "free_bet"):
             h = P.green_up(e, back, lay) if kind == "green" else P.free_bet(e, lay)
             if h is None:
@@ -411,11 +476,13 @@ class AutoTrader:
             if leg["side"] == "lay":
                 if not lay or lay <= 1.0:
                     return "wait", "No lay price on offer to scale in."
-                price, size = lay, round(extra / (lay - 1), 2)
+                price = round_to_tick(leg["entry_price"], "lay") if (j.delayed and not j.simulate) else lay
+                size = round(extra / (price - 1), 2)
             else:
                 if not back:
                     return "wait", "No back price on offer to scale in."
-                price, size = back, extra
+                price = round_to_tick(leg["entry_price"], "back") if (j.delayed and not j.simulate) else back
+                size = extra
             if -e.worst + extra > j.max_liability + 0.01:
                 return "done", f"Scale-in skipped: it would take the risk above the plan's £{j.max_liability:.2f}."
             if not j.simulate:
@@ -427,6 +494,40 @@ class AutoTrader:
             out, msg = self._place(bf, j, i, leg["side"], price, size, tag)
             return ("done" if out in ("done", "partial") else "wait"), msg
         return "done", f"Unknown action {kind}; ignored."
+
+    def _hedge_delayed(self, bf, j: Job, kind: str, i: int, e: P.Exposure, back, lay, tag: str) -> tuple[str, str]:
+        """Hedge with a delayed price feed: estimate the price (a real fill from the last two minutes beats the
+        delayed book), send a first part with a protective limit, read the real matched price from the reply,
+        then size the rest from that. Repeats each tick until level; unmatched attempts widen the limit."""
+        if j.last_score_change and time.time() - j.last_score_change < DELAYED_SETTLE_SECONDS:
+            return "wait", "Score just changed: letting the market reopen before trading (delayed prices)."
+        real = self._recent_fill(j, i)
+        est_back = real or back
+        est_lay = real or lay
+        h = P.green_up(e, est_back, est_lay) if kind == "green" else P.free_bet(e, est_lay)
+        if h is None:
+            if (kind == "green" and abs(e.win - e.lose) < 0.01) or (kind == "free_bet" and e.backed - e.laid < 0.01):
+                return "done", "Position already level."
+            return "wait", "No price to estimate from yet."
+        band = j.bands.get(tag, BAND_CONFIRMED if real else BAND_FIRST)
+        limit = round_to_tick(h.price / (1 + band), "back") if h.side == "back" else round_to_tick(h.price * (1 + band), "lay")
+        size = h.size if real else round(h.size * PROBE_FRACTION, 2)
+        jur = self.jurisdiction()
+        if not min_bet_ok(size, limit, jurisdiction=jur):
+            size = min(h.size, 2.0)  # the smallest order the exchange takes, never more than the hedge needs
+        # the worst the exchange can give is the limit: the hedge must still not lower the worst case there
+        while size >= 0.01 and P.add_bet(e, h.side, limit, size).worst + 0.01 < e.worst:
+            size = round(size / 2, 2)
+        if not min_bet_ok(size, limit, jurisdiction=jur):
+            if abs(e.win - e.lose) < 2 * limit:
+                return "done", f"Remaining hedge is below the exchange minimum; position left as it is (worst case £{e.worst:.2f})."
+            return "wait", "Hedge too small to send safely at this limit; will retry."
+        out, msg = self._place(bf, j, i, h.side, limit, size, tag)
+        if out == "wait":
+            return out, msg
+        msg += " (delayed prices: sizing the rest from the real matched price)"
+        j.note(msg)
+        return "wait", msg
 
     # ------------------------------------------------------------------ manual
     def green_now(self, job_id: str, leg: Optional[int] = None) -> Optional[Job]:

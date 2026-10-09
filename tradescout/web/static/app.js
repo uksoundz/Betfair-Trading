@@ -67,6 +67,7 @@ async function init() {
   $('#modal').onclick = (ev) => { if (ev.target.id === 'modal') $('#modal').hidden = true; };
   document.addEventListener('visibilitychange', () => { if (!document.hidden && nextRefreshAt && Date.now() >= nextRefreshAt) silentRefresh(); });
   await setSport('football');
+  if (status.autotrade && status.autotrade.active) startAlertWatch();
 }
 
 async function setSport(s) {
@@ -639,15 +640,39 @@ async function loadOpenBets() {
 }
 
 // ---------------- auto-trading
-let autoTimer = null;
-async function openArm(entryId, simulate) {
+let autoTimer = null, alertTimer = null, seenAlerts = null;
+function beep() {
+  try { const c = new (window.AudioContext || window.webkitAudioContext)(); [0, 0.35, 0.7].forEach(t => { const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 880; o.connect(g); g.connect(c.destination); g.gain.setValueAtTime(0.25, c.currentTime + t); o.start(c.currentTime + t); o.stop(c.currentTime + t + 0.2); }); } catch (e) { }
+}
+async function startAlertWatch() {
+  clearTimeout(alertTimer);
+  try {
+    const r = await api('/api/autotrade');
+    const all = r.jobs.flatMap(j => (j.alerts || []).map(a => ({ ...a, job: j })));
+    const keys = new Set(all.map(a => a.job.id + a.rule));
+    if (seenAlerts === null) seenAlerts = keys;  // do not replay old alerts on page load
+    for (const a of all) {
+      if (seenAlerts.has(a.job.id + a.rule)) continue;
+      seenAlerts.add(a.job.id + a.rule);
+      beep();
+      $('#banner').innerHTML = `<div class="banner err"><b>${esc(a.job.home)} v ${esc(a.job.away)}: ${esc(a.text)}</b> <a class="btnlink" href="${esc(a.url)}" target="_blank" rel="noopener">Open on Betfair ›</a> <button class="small" id="alertGreen">Green up from TradeScout</button></div>`;
+      $('#alertGreen').onclick = async () => { try { const g = await post('/api/autotrade/green', { job_id: a.job.id }); toast(g.job.status, 7000); } catch (e) { toast('Green up failed: ' + e.message, 6000); } };
+      try { if (window.Notification && Notification.permission === 'granted') new Notification('TradeScout: ' + a.job.home + ' v ' + a.job.away, { body: a.text }); } catch (e) { }
+    }
+    if (r.jobs.some(j => j.state === 'armed' || j.state === 'live')) alertTimer = setTimeout(startAlertWatch, 5000);
+  } catch (e) { alertTimer = setTimeout(startAlertWatch, 15000); }
+}
+async function openArm(entryId, simulate, mode) {
   const modal = $('#modal'), card = $('#modalCard'); modal.hidden = false;
   card.innerHTML = '<div class="spinner">Reading the plan…</div>';
+  mode = mode || 'auto';
   try {
-    const p = await post('/api/autotrade/preview', { entry_id: entryId, simulate: !!simulate });
+    const p = await post('/api/autotrade/preview', { entry_id: entryId, simulate: !!simulate, mode });
     const j = p.job;
-    card.innerHTML = `<h2>Auto-trade: ${esc(j.strategy_label)}</h2><div class="meta">${esc(j.home)} v ${esc(j.away)} · ${esc(j.date)} · ${j.simulate ? '<b>SIMULATE</b>: nothing will be sent to Betfair' : '<b class="neg">LIVE</b>: orders go to your Betfair account'}</div>
-      <h3>What TradeScout will do once the match is in play</h3>
+    card.innerHTML = `<h2>Auto-trade: ${esc(j.strategy_label)}</h2><div class="meta">${esc(j.home)} v ${esc(j.away)} · ${esc(j.date)} · ${mode === 'alert' ? '<b>ALERT</b>: TradeScout tells you, you act on Betfair' : j.simulate ? '<b>SIMULATE</b>: nothing will be sent to Betfair' : '<b class="neg">LIVE</b>: orders go to your Betfair account'}</div>
+      <div class="row" style="margin:8px 0"><label><input type="radio" name="armMode" value="auto" ${mode === 'auto' ? 'checked' : ''}> <b>Act for me</b>: TradeScout places the orders</label>
+        <label><input type="radio" name="armMode" value="alert" ${mode === 'alert' ? 'checked' : ''}> <b>Alert me</b>: beep and notify, I press Cash Out on Betfair${p.delayed ? ' (best with a Delayed key)' : ''}</label></div>
+      <h3>${mode === 'alert' ? 'When TradeScout will alert you, and what it will suggest' : 'What TradeScout will do once the match is in play'}</h3>
       <ol style="margin:6px 0 6px 18px">${j.rules_text.map(t => `<li>${esc(t)}</li>`).join('')}</ol>
       <h3>Position it manages</h3>
       <ul style="margin:6px 0 6px 18px">${j.legs.map(l => `<li>${esc(l.side.toUpperCase())} ${esc(l.runner_name)} (${esc(l.market_label || l.market)}) at ${l.entry_price.toFixed(2)}, £${l.size.toFixed(2)}</li>`).join('')}</ul>
@@ -655,14 +680,20 @@ async function openArm(entryId, simulate) {
       ${p.warnings.map(w => `<div class="warn">! ${esc(w)}</div>`).join('')}
       <div class="banner" style="margin-top:10px"><b>Keep TradeScout open</b> (and the computer awake) until the match ends. If the app is closed nothing is done; the position simply runs to the result on Betfair.</div>
       <label style="display:block;margin-top:8px"><input type="checkbox" id="armSim" ${j.simulate ? 'checked' : ''}> Simulate only (follow the rules on live prices, send nothing)</label>
-      <label style="display:block;margin-top:6px"><input type="checkbox" id="armOk"> I want TradeScout to carry out the steps above for this plan without asking each time.</label>
+      <label style="display:block;margin-top:6px"><input type="checkbox" id="armOk"> ${mode === 'alert' ? 'Alert me when each step above is due.' : 'I want TradeScout to carry out the steps above for this plan without asking each time.'}</label>
       <div class="row" style="margin-top:12px"><button id="armGo" class="primary place" disabled>Arm auto-trading</button><button id="armClose" class="ghost">Cancel</button></div><div id="armOut"></div>`;
     $('#armClose').onclick = () => modal.hidden = true;
     $('#armOk').onchange = () => { $('#armGo').disabled = !$('#armOk').checked; };
-    $('#armSim').onchange = () => openArm(entryId, $('#armSim').checked);
+    $('#armSim').onchange = () => openArm(entryId, $('#armSim').checked, mode);
+    document.querySelectorAll('input[name=armMode]').forEach(r => r.onchange = () => openArm(entryId, $('#armSim').checked, r.value));
     $('#armGo').onclick = async () => {
       $('#armGo').disabled = true;
-      try { const r = await post('/api/autotrade/arm', { entry_id: entryId, simulate: $('#armSim').checked, confirm: true }); modal.hidden = true; toast(r.job.simulate ? 'Armed in simulate mode.' : 'Auto-trading armed for this plan.'); await loadStatus(); showView('journal'); }
+      try {
+        if (mode === 'alert' && window.Notification && Notification.permission === 'default') { try { await Notification.requestPermission(); } catch (e) { } }
+        const r = await post('/api/autotrade/arm', { entry_id: entryId, simulate: $('#armSim').checked, confirm: true, mode }); modal.hidden = true;
+        toast(r.job.mode === 'alert' ? 'Alerts armed: keep this tab open and the sound on.' : r.job.simulate ? 'Armed in simulate mode.' : 'Auto-trading armed for this plan.');
+        await loadStatus(); showView('journal'); startAlertWatch();
+      }
       catch (e) { $('#armOut').innerHTML = `<div class="warn">! ${esc(e.message)}</div>`; $('#armGo').disabled = false; }
     };
   } catch (e) { card.innerHTML = `<h2>Auto-trade</h2><div class="warn">! ${esc(e.message)}</div><div class="row" style="margin-top:10px">${/switched off/.test(e.message) ? '<button id="armSettings" class="small primary">Open Settings</button>' : ''}<button id="armClose" class="ghost">Close</button></div>`; $('#armClose').onclick = () => modal.hidden = true; if ($('#armSettings')) $('#armSettings').onclick = () => { modal.hidden = true; showView('settings'); }; }
@@ -678,9 +709,10 @@ async function loadAutotrade() {
       const active = j.state === 'armed' || j.state === 'live';
       const sc = j.score || {};
       const exp = Object.values(j.exposure || {}).map((e, k) => `${esc(j.legs[k] ? j.legs[k].runner_name : '')}: <b class="${e.win >= 0 ? 'pos' : 'neg'}">${money(e.win)}</b> if it wins / <b class="${e.lose >= 0 ? 'pos' : 'neg'}">${money(e.lose)}</b> if not`).join(' · ');
-      return `<div class="card"><div class="head"><span class="badge-dec ${j.state === 'live' ? 'trade' : active ? 'research' : 'notrade'}">${esc(j.state.toUpperCase())}</span>${j.simulate ? ' <span class="evidence">simulate</span>' : ''} <b>${esc(j.home)} v ${esc(j.away)}</b> · ${esc(j.strategy_label)}
+      return `<div class="card"><div class="head"><span class="badge-dec ${j.state === 'live' ? 'trade' : active ? 'research' : 'notrade'}">${esc(j.state.toUpperCase())}</span>${j.mode === 'alert' ? ' <span class="evidence">alert me</span>' : j.simulate ? ' <span class="evidence">simulate</span>' : ''}${j.delayed ? ' <span class="evidence" title="Delayed application key">delayed prices</span>' : ''} <b>${esc(j.home)} v ${esc(j.away)}</b> · ${esc(j.strategy_label)}
         ${active ? `<button class="small" data-green="${j.id}">Green up now</button><button class="small ghost danger" data-disarm="${j.id}">Disarm</button>` : ''}</div>
         <div class="meta">${esc(j.status)}${sc.source ? ' · ' + esc(sc.source) : ''}</div>
+        ${(j.alerts || []).slice().reverse().map(a => `<div class="banner err" style="margin:6px 0">${hhmm(a.ts)} <b>${esc(a.text)}</b> <a class="btnlink" href="${esc(a.url)}" target="_blank" rel="noopener">Open on Betfair ›</a></div>`).join('')}
         ${exp ? `<div class="meta">Position: ${exp}</div>` : ''}
         <ul class="meta" style="margin:4px 0 4px 18px">${j.rules_text.map((t, k) => `<li>${j.fired.includes(j.rules[k].id) ? '✓ ' : ''}${esc(t)}</li>`).join('')}</ul>
         <details><summary class="meta">Log (${j.log.length})</summary><div class="meta">${j.log.slice().reverse().map(l => `${hhmm(l.ts)} ${esc(l.text)}`).join('<br>')}</div></details></div>`;

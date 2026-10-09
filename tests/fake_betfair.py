@@ -132,6 +132,7 @@ class FakeExchange:
         self.weight_limit = 200  # lower it (control {"weight_limit": n}) to make the exchange stricter than documented
         self.timelines: dict[str, dict] = {}  # event id -> football timeline (Betfair in-play score service shape)
         self.tennis_scores: dict[str, dict] = {}
+        self.data_delayed = True  # books say isMarketDataDelayed (a Delayed application key); control {"delayed": false} for a live key
         self._days: dict[str, dict] = {}
         self._lock = threading.Lock()
         self._next_id = 10_000
@@ -416,7 +417,7 @@ class FakeExchange:
             ev_name = m["event"]["name"]
             inplay = ev_name in self.inplay
             status = "CLOSED" if m.get("_closed") else "SUSPENDED" if ev_name in self.suspend else "OPEN"
-            out.append({"marketId": mid, "isMarketDataDelayed": True, "status": status, "betDelay": 5 if inplay else 0, "bspReconciled": False, "complete": True,
+            out.append({"marketId": mid, "isMarketDataDelayed": self.data_delayed, "status": status, "betDelay": 5 if inplay else 0, "bspReconciled": False, "complete": True,
                         "inplay": inplay, "numberOfWinners": 1, "numberOfRunners": len(m["runners"]), "numberOfActiveRunners": len(m["runners"]),
                         "totalMatched": m["totalMatched"], "totalAvailable": round(m["totalMatched"] * 0.1, 2), "crossMatching": True, "runnersVoidable": False,
                         "version": 1, "runners": m["_book"]})
@@ -453,7 +454,11 @@ class FakeExchange:
                 continue
             # matched if the limit is at or worse than the best available price
             br = next(b for b in m["_book"] if b["selectionId"] == sel and float(b.get("handicap") or 0.0) == hc)
-            best = br["ex"]["availableToBack"][0]["price"] if ins["side"] == "BACK" else br["ex"]["availableToLay"][0]["price"]
+            true = br.get("_true")
+            if true:
+                best = true["back"] if ins["side"] == "BACK" else true["lay"]
+            else:
+                best = br["ex"]["availableToBack"][0]["price"] if ins["side"] == "BACK" else br["ex"]["availableToLay"][0]["price"]
             matched = (price <= best) if ins["side"] == "BACK" else (price >= best)
             bet_id = str(300_000_000 + len(self.orders))
             order = {"betId": bet_id, "marketId": mid, "selectionId": sel, "handicap": hc, "priceSize": {"price": price, "size": size}, "bspLiability": 0.0,
@@ -549,14 +554,21 @@ class FakeExchange:
                 sel = next((r["selectionId"] for r in m["runners"] if r["runnerName"] == pr["runner"] and float(r.get("handicap") or 0) == float(pr.get("handicap", 0))), None)
                 for b in m["_book"]:
                     if b["selectionId"] == sel and float(b.get("handicap") or 0) == float(pr.get("handicap", 0)):
-                        b["ex"]["availableToBack"] = [{"price": pr["back"], "size": 500.0}] if pr.get("back") else []
-                        b["ex"]["availableToLay"] = [{"price": pr["lay"], "size": 500.0}] if pr.get("lay") else []
+                        if "back" in pr or "lay" in pr:  # what the (possibly delayed) book shows
+                            b["ex"]["availableToBack"] = [{"price": pr["back"], "size": 500.0}] if pr.get("back") else []
+                            b["ex"]["availableToLay"] = [{"price": pr["lay"], "size": 500.0}] if pr.get("lay") else []
+                        if "true_back" in pr or "true_lay" in pr:  # the real market now, used for matching
+                            b["_true"] = {"back": pr.get("true_back"), "lay": pr.get("true_lay")}
+                        else:
+                            b.pop("_true", None)
         if "close" in body:
             for m in self._all_markets().values():
                 if m["event"]["name"] == body["close"]:
                     m["_closed"] = True
         if "weight_limit" in body:
             self.weight_limit = int(body["weight_limit"])
+        if "delayed" in body:
+            self.data_delayed = bool(body["delayed"])
         if "timeout_market_types" in body:
             self.timeout_market_types = set(body["timeout_market_types"] or [])
         if body.get("reset_calls"):

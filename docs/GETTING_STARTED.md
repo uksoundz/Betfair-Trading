@@ -164,6 +164,30 @@ Safety rules it always follows:
 Plans whose in-play steps need judgement or data the app does not have (the correct-score basket,
 laying the favourite on a break of serve) cannot be armed; trade those by hand.
 
+### With the free Delayed application key
+
+The Delayed key shows prices up to three minutes old. That matters for greening up in play, but the
+£499 Live key is not needed, because three things are not delayed: Betfair's live scoreboard (goals,
+minute, sets), your order results (how much matched and at what price), and the matching itself
+(Betfair always gives you the best price available, even if it is better than your limit).
+
+When you arm a plan you choose how it acts:
+
+* **Act for me.** Goals and the clock come from the live scoreboard as usual. To hedge, TradeScout
+  waits about 20 seconds after a goal for the market to reopen, sends part of the hedge with a
+  protective limit (about 10% beyond the old price), reads the real matched price from Betfair's
+  reply, and sizes the rest from that real price. If nothing matches within 15 seconds it cancels and
+  widens the limit, up to 25%. Every step is in the log so you can check it against Betfair.
+* **Alert me.** TradeScout beeps, shows a desktop notification and a red banner on whatever tab you
+  are on, with the step to take, a suggested stake, and a link that opens the market on Betfair. You
+  press **Cash Out** in the Betfair app or website, which uses the live price. Keep the TradeScout tab
+  open with the sound on. This is the most precise option on a Delayed key.
+
+Small stakes: Betfair's minimum is £2 a bet (or £1 when the payout reaches £10). With a plan stake of
+a few pounds the last part of a hedge can fall below that, so the position ends close to level rather
+than exactly level (for example £4.50 if it wins and £0 if not, instead of £2.25 either way). The log
+says when that happens.
+
 ---
 
 ## Which accounts you need
