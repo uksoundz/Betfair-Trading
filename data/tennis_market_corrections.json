@@ -1,0 +1,181 @@
+{
+ "source": "tennis-data.co.uk ATP closing odds (Pinnacle) with set scores",
+ "dev": [
+  2021,
+  2023
+ ],
+ "holdout": [
+  2024,
+  2025
+ ],
+ "targets": {
+  "after_lost_set1": {
+   "3": {
+    "a": -0.22723477322722568,
+    "b": 1.0350342461464037,
+    "validated": true,
+    "n_dev": 2235,
+    "n_holdout": 1521,
+    "holdout_logloss_model": 0.6134,
+    "holdout_logloss_corrected": 0.6109,
+    "holdout_mean_model": 0.3554,
+    "holdout_mean_actual": 0.3136
+   },
+   "5": {
+    "a": 0.0,
+    "b": 1.0,
+    "validated": false,
+    "n_dev": 473,
+    "n_holdout": 330,
+    "holdout_logloss_model": 0.6441,
+    "holdout_logloss_corrected": 0.6551,
+    "holdout_mean_model": 0.4992,
+    "holdout_mean_actual": 0.5091
+   }
+  },
+  "after_lost_set1_clear": {
+   "3": {
+    "a": -0.4180152868767845,
+    "b": 1.008436521437533,
+    "validated": true,
+    "n_dev": 878,
+    "n_holdout": 566,
+    "holdout_logloss_model": 0.598,
+    "holdout_logloss_corrected": 0.59,
+    "holdout_mean_model": 0.3489,
+    "holdout_mean_actual": 0.2739
+   },
+   "5": {
+    "a": 0.0,
+    "b": 1.0,
+    "validated": false,
+    "n_dev": 198,
+    "n_holdout": 122,
+    "holdout_logloss_model": 0.631,
+    "holdout_logloss_corrected": 0.6684,
+    "holdout_mean_model": 0.4762,
+    "holdout_mean_actual": 0.5328
+   }
+  },
+  "after_lost_set1_close": {
+   "3": {
+    "a": -0.1210250940462498,
+    "b": 1.0403840120895362,
+    "validated": true,
+    "n_dev": 1357,
+    "n_holdout": 955,
+    "holdout_logloss_model": 0.6226,
+    "holdout_logloss_corrected": 0.622,
+    "holdout_mean_model": 0.3593,
+    "holdout_mean_actual": 0.3372
+   },
+   "5": {
+    "a": 0.0,
+    "b": 1.0,
+    "validated": false,
+    "n_dev": 275,
+    "n_holdout": 208,
+    "holdout_logloss_model": 0.6518,
+    "holdout_logloss_corrected": 0.6531,
+    "holdout_mean_model": 0.5127,
+    "holdout_mean_actual": 0.4952
+   }
+  },
+  "after_won_set1": {
+   "3": {
+    "a": -0.10762861709344865,
+    "b": 1.1730558182187674,
+    "validated": true,
+    "n_dev": 3836,
+    "n_holdout": 2538,
+    "holdout_logloss_model": 0.3667,
+    "holdout_logloss_corrected": 0.3647,
+    "holdout_mean_model": 0.8519,
+    "holdout_mean_actual": 0.8731
+   },
+   "5": {
+    "a": 0.0,
+    "b": 1.0,
+    "validated": false,
+    "n_dev": 997,
+    "n_holdout": 622,
+    "holdout_logloss_model": 0.3385,
+    "holdout_logloss_corrected": 0.3394,
+    "holdout_mean_model": 0.8653,
+    "holdout_mean_actual": 0.8826
+   }
+  },
+  "straight_fav": {
+   "3": {
+    "a": 0.3511588713960438,
+    "b": 1.1665566131943195,
+    "validated": true,
+    "n_dev": 6071,
+    "n_holdout": 4059,
+    "holdout_logloss_model": 0.6667,
+    "holdout_logloss_corrected": 0.6562,
+    "holdout_mean_model": 0.3815,
+    "holdout_mean_actual": 0.4491
+   },
+   "5": {
+    "a": 0.5433032168536496,
+    "b": 1.122538881941037,
+    "validated": true,
+    "n_dev": 1470,
+    "n_holdout": 952,
+    "holdout_logloss_model": 0.6208,
+    "holdout_logloss_corrected": 0.61,
+    "holdout_mean_model": 0.2832,
+    "holdout_mean_actual": 0.355
+   }
+  },
+  "straight_dog": {
+   "3": {
+    "a": 0.422573709296611,
+    "b": 1.1151014634480239,
+    "validated": true,
+    "n_dev": 6071,
+    "n_holdout": 4059,
+    "holdout_logloss_model": 0.4662,
+    "holdout_logloss_corrected": 0.4627,
+    "holdout_mean_model": 0.1567,
+    "holdout_mean_actual": 0.187
+   },
+   "5": {
+    "a": 1.377185787733908,
+    "b": 1.3943091060169384,
+    "validated": true,
+    "n_dev": 1470,
+    "n_holdout": 952,
+    "holdout_logloss_model": 0.2381,
+    "holdout_logloss_corrected": 0.2351,
+    "holdout_mean_model": 0.0542,
+    "holdout_mean_actual": 0.0714
+   }
+  },
+  "set1_fav": {
+   "3": {
+    "a": -0.03639667260393066,
+    "b": 1.2141187961703037,
+    "validated": true,
+    "n_dev": 6071,
+    "n_holdout": 4059,
+    "holdout_logloss_model": 0.6423,
+    "holdout_logloss_corrected": 0.6413,
+    "holdout_mean_model": 0.6124,
+    "holdout_mean_actual": 0.6253
+   },
+   "5": {
+    "a": -0.06567709832546463,
+    "b": 1.3312769289193034,
+    "validated": true,
+    "n_dev": 1470,
+    "n_holdout": 952,
+    "holdout_logloss_model": 0.616,
+    "holdout_logloss_corrected": 0.6156,
+    "holdout_mean_model": 0.6434,
+    "holdout_mean_actual": 0.6534
+   }
+  }
+ }
+}

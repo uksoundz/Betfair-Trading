@@ -194,6 +194,29 @@ a few pounds the last part of a hedge can fall below that, so the position ends 
 than exactly level (for example £4.50 if it wins and £0 if not, instead of £2.25 either way). The log
 says when that happens.
 
+### Tennis: arming an in-play entry (no bet before the match)
+
+Some tennis plans have nothing to bet before the start. **Lay favourite after a clear first-set loss**
+shows the gold **ARM** badge instead of TRADE: the edge, if it exists, only appears in play.
+
+1. Open the match (Tennis, Matches) and press **Arm in-play entry…** on that plan.
+2. The window says what will happen: if the favourite loses set 1 6-3 or wider, TradeScout lays them
+   in Match Odds at the limit shown or lower (for example 3.30). Above that price there is no value,
+   so nothing is placed. Set the liability (the most it can lose) and choose **Act for me**, **Alert
+   me** (you place it on Betfair yourself) or **Simulate only**.
+3. Tick the confirmation and press **Arm**. Nothing is bet now. The plan appears in My picks >
+   Auto-trading as ARMED and goes LIVE when the match starts.
+4. If the favourite wins set 1, or loses it 7-5, 6-4 or in a tiebreak, the plan ends with nothing
+   placed. On a clear loss the order goes on at once and stays up for two minutes; whatever matched is
+   held to the result, the rest is cancelled.
+
+This works on the Delayed key: the trigger is the live scoreboard and the limit price is the value test,
+so Betfair matches at the real price if it is within the limit. Keep TradeScout open through the first
+set. Start with simulate or small stakes: how often Betfair offers the limit is not yet known.
+
+**Set betting value against match odds** is an ordinary pre-match plan (TRADE or NO TRADE): place it
+from the slip like any other and it settles at the result.
+
 ---
 
 ## Which accounts you need

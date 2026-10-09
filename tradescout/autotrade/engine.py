@@ -1,7 +1,8 @@
 """The auto-trader: follows the in-play rules of plans the user has placed and explicitly armed.
 
-Nothing here opens a position on its own. A job exists only after the user places a plan and presses
-Auto-trade on it. From then on, once the match is in play, the engine checks every few seconds:
+Nothing here opens a position the user has not asked for. A job exists only after the user places a plan
+and presses Auto-trade on it, or arms a conditional in-play entry (a plan whose only bet is placed in play
+when its trigger happens, at the plan's own value limit, within the plan's stake and the daily cap). From then on, once the match is in play, the engine checks every few seconds:
 
   1. the exchange: market status, best prices, and the user's matched bets on the plan's selections
      (only the bets of that plan: the journal's bet ids plus the engine's own);
@@ -148,7 +149,7 @@ class AutoTrader:
             for j in self.jobs.values():
                 if j.entry_id == job.entry_id and j.state in ACTIVE:
                     return j
-            if job.simulate and not job.sim_bets:
+            if job.simulate and not job.sim_bets and not _enters_in_play(job):  # an in-play entry starts flat
                 job.sim_bets = [{"leg": i, "side": l["side"], "price": l["entry_price"], "size": l["size"]} for i, l in enumerate(job.legs)]
             job.note(("Armed in ALERT mode: TradeScout tells you when each step is due; you act on Betfair." if job.mode == "alert" else
                       "Armed in SIMULATE mode: rules run on live prices, nothing is sent." if job.simulate else "Armed: TradeScout will follow the plan's in-play rules on your Betfair account.")
@@ -248,7 +249,7 @@ class AutoTrader:
         if j.state == "armed":
             j.state = "live"
             j.note("Match in play: following the plan.")
-        if not j.simulate and all(e.backed + e.laid < 0.01 and e.unmatched < 0.01 for e in exps):
+        if not j.simulate and not _enters_in_play(j) and all(e.backed + e.laid < 0.01 and e.unmatched < 0.01 for e in exps):
             self._finish(j, "expired", "The entry was never matched before the start (unmatched orders lapse at kick-off). Nothing to trade.")
             return True
         state = self._match_state(j, score, books)
@@ -299,8 +300,8 @@ class AutoTrader:
                     return True
                 continue
             j.status = msg
-            if r["do"].get("a") in ("green", "free_bet"):
-                break  # an exit in progress takes priority over anything later in the plan
+            if r["do"].get("a") in ("green", "free_bet", "enter"):
+                break  # an exit or entry in progress takes priority over anything later in the plan
         else:
             if j.state == "live":
                 j.status = self._describe_state(j)
@@ -365,13 +366,14 @@ class AutoTrader:
         bf = self.client()
         keep = []
         for o in j.engine_orders:
-            if time.time() - o["placed_at"] >= older_than:
+            due = (time.time() >= o["expires_at"]) if (o.get("expires_at") and older_than > 0) else (time.time() - o["placed_at"] >= older_than)
+            if due:
                 try:
                     bf.cancel_orders(o["market_id"], [o["bet_id"]])
                 except Exception:
                     keep.append(o)
                     continue
-                if o.get("tag") and older_than > 0:  # not matched in time: allow a wider limit next attempt
+                if o.get("tag") and older_than > 0 and not o.get("expires_at"):  # not matched in time: allow a wider limit next attempt
                     j.bands[o["tag"]] = min(BAND_MAX, max(j.bands.get(o["tag"], BAND_FIRST), BAND_FIRST) * 1.6)
             else:
                 keep.append(o)
@@ -392,6 +394,13 @@ class AutoTrader:
         if i >= len(j.legs):
             return ""
         leg = j.legs[i]
+        if action.get("a") == "enter":
+            lim, side = float(action["limit"]), action.get("side", leg["side"])
+            risk = float(action.get("fraction", 1.0)) * j.unit
+            size = risk / (lim - 1) if side == "lay" else risk
+            return (f"Suggested: {side} {leg.get('runner_name')} at {lim:.2f} or {'lower' if side == 'lay' else 'higher'}, stake £{size:.2f}"
+                    + (f" (liability £{risk:.2f})" if side == "lay" else "") + f", within {action.get('valid_seconds', 120):.0f} seconds. "
+                    "Above that price there is no value: leave it.")
         back, lay = self._runner_book(books.get(leg["market_id"]), leg)
         e = exps[i]
         h = P.green_up(e, back, lay) if action.get("a") == "green" else P.free_bet(e, lay) if action.get("a") == "free_bet" else None
@@ -409,7 +418,7 @@ class AutoTrader:
                 return float(f["price"])
         return None
 
-    def _place(self, bf, j: Job, leg_i: int, side: str, price: float, size: float, tag: str) -> tuple[str, str]:
+    def _place(self, bf, j: Job, leg_i: int, side: str, price: float, size: float, tag: str, valid_seconds: Optional[float] = None) -> tuple[str, str]:
         leg = j.legs[leg_i]
         if j.simulate:
             j.sim_bets.append({"leg": leg_i, "side": side, "price": price, "size": size})
@@ -431,7 +440,10 @@ class AutoTrader:
             j.fills.append({"leg": leg_i, "side": side, "price": float(avg), "size": matched, "ts": time.time()})
         got = f" (matched at {float(avg):.2f})" if matched > 0 and avg and abs(float(avg) - price) > 1e-9 else ""
         if matched + 0.01 < size:
-            j.engine_orders.append({"bet_id": bet, "market_id": leg["market_id"], "placed_at": time.time(), "leg": leg_i, "tag": tag})
+            o = {"bet_id": bet, "market_id": leg["market_id"], "placed_at": time.time(), "leg": leg_i, "tag": tag}
+            if valid_seconds:
+                o["expires_at"] = time.time() + valid_seconds  # an entry rests for its window, not the usual 15 s
+            j.engine_orders.append(o)
             return "partial", f"{side} {leg.get('runner_name')} £{size:.2f} limit {price:.2f}{got}: £{matched:.2f} matched so far."
         return "done", f"{side} {leg.get('runner_name')} £{size:.2f} limit {price:.2f}{got}, matched."
 
@@ -439,6 +451,8 @@ class AutoTrader:
         kind = action.get("a")
         if kind == "hold":
             return "done", ""
+        if kind == "enter":
+            return self._enter(bf, j, action, books, exps, tag)
         i = action.get("leg", 0)
         leg = j.legs[i]
         book = books.get(leg["market_id"]) or {}
@@ -501,6 +515,67 @@ class AutoTrader:
             return ("done" if out in ("done", "partial") else "wait"), msg
         return "done", f"Unknown action {kind}; ignored."
 
+    def _enter(self, bf, j: Job, action: dict, books: dict, exps: list, tag: str) -> tuple[str, str]:
+        """Open the position in play with a limit order at the plan's value limit. Works the same on a Delayed key:
+        the trigger comes from the live score and the limit is the value test, so no price needs to be read; Betfair
+        matches at the best price on offer that is at or better than the limit. The order rests for the window,
+        then the rest is cancelled; whatever matched runs to the result."""
+        i = action.get("leg", 0)
+        leg = j.legs[i]
+        side, limit = action.get("side", leg["side"]), float(action["limit"])
+        window = float(action.get("valid_seconds", 120.0))
+        key = f"enter:{tag}"
+        started = j.waits.setdefault(key, time.time())
+        left = started + window - time.time()
+        e = exps[i]
+        book = books.get(leg["market_id"]) or {}
+        back, lay = self._runner_book(book, leg)
+        risk = round(float(action.get("fraction", 1.0)) * j.unit, 2)
+        matched = e.laid if side == "lay" else e.backed
+        if j.simulate:
+            # simulate honestly: it 'matches' only if the price on offer is within the limit, and at that price
+            if any(b["leg"] == i for b in j.sim_bets):
+                return "done", "SIMULATED entry already taken."
+            px = lay if side == "lay" else back
+            ok = px and ((px <= limit) if side == "lay" else (px >= limit))
+            if book.get("status") == "OPEN" and ok:
+                size = round(risk / (px - 1), 2) if side == "lay" else risk
+                j.sim_bets.append({"leg": i, "side": side, "price": px, "size": size})
+                return "done", f"SIMULATED: {side} {leg.get('runner_name')} £{size:.2f} at {px:.2f} (limit {limit:.2f}); held to the result."
+            if left <= 0:
+                return "done", f"SIMULATED: the price never came within {limit:.2f} in the window (best {px or '-'}); no entry."
+            return "wait", f"SIMULATED: waiting {left:.0f}s for {side} at {limit:.2f} or better (now {px or '-'})."
+        placed = [o for o in j.engine_orders if o.get("tag") == tag]
+        if j.waits.get(key + ":sent"):
+            if left > 0 and placed and not (matched > 0 and e.unmatched < 0.01):
+                return "wait", f"Entry order resting at {limit:.2f}: £{matched:.2f} matched so far, {left:.0f}s left in the window."
+            for o in placed:
+                try:
+                    bf.cancel_orders(o["market_id"], [o["bet_id"]])
+                except Exception:
+                    pass
+            j.engine_orders = [o for o in j.engine_orders if o.get("tag") != tag]
+            if matched < 0.01:
+                return "done", f"Entry window closed: nothing matched at {limit:.2f} or better (the exchange never offered it). No position."
+            return "done", f"Entry window closed: £{matched:.2f} matched; held to the result (worst case £{e.worst:.2f})."
+        if left <= 0:
+            return "done", "Entry window passed before an order could go on (market unavailable). No position."
+        if book.get("status") != "OPEN":
+            return "wait", f"{leg.get('market_label')} is {str(book.get('status', 'unavailable')).lower()}: waiting {left:.0f}s more to enter."
+        size = round(risk / (limit - 1), 2) if side == "lay" else risk
+        if not min_bet_ok(size, limit, jurisdiction=self.jurisdiction()):
+            return "done", f"Entry of £{size:.2f} is below the exchange minimum; no entry. Raise the plan stake."
+        blocked = self.can_commit(risk)
+        if blocked:
+            return "done", f"Entry skipped: {blocked}"
+        out, msg = self._place(bf, j, i, side, limit, size, tag, valid_seconds=max(1.0, left))
+        if out == "wait":
+            return out, msg  # refused: retried next tick while the window lasts
+        j.waits[key + ":sent"] = time.time()
+        if out == "done":
+            return "done", msg + " Held to the result."
+        return "wait", msg + f" Resting for up to {left:.0f}s."
+
     def _hedge_delayed(self, bf, j: Job, kind: str, i: int, e: P.Exposure, back, lay, tag: str) -> tuple[str, str]:
         """Hedge with a delayed price feed: estimate the price (a real fill from the last two minutes beats the
         delayed book), send a first part with a protective limit, read the real matched price from the reply,
@@ -553,6 +628,11 @@ class AutoTrader:
                 j.status = msg
             self.save()
             return j
+
+
+def _enters_in_play(j: Job) -> bool:
+    """Plans with no pre-match bet: the engine opens the position itself on a trigger."""
+    return any((r.get("do") or {}).get("a") == "enter" for r in j.rules)
 
 
 def new_job(**kw) -> Job:

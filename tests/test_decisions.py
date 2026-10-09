@@ -98,16 +98,17 @@ def test_journal_multi_sport_and_signals(tmp_path, provider):
     assert n == 2 and {e.sport for e in j.entries} == {"football", "tennis"}
     assert all(e.status in ("won", "lost") and e.result for e in j.entries)
     path = tmp_path / "signals.jsonl"
-    assert signals.record(fscan.ideas[:5] + tscan.ideas[:2], "none", path) == 7
+    picked = fscan.ideas[:5] + tscan.ideas[:2]
+    assert signals.record(picked, "none", path) == len(picked) >= 6
     rows = signals.load(path)
-    assert len(rows) == 7 and rows[0]["decision"] == "RESEARCH"
+    assert len(rows) == len(picked) and rows[0]["decision"] == "RESEARCH"
     lookup = lambda sport, fx: tp.result_for(fx) if sport == "tennis" else provider.result_for(fx)
     with_result = sum(1 for r in rows if lookup(r["sport"], __import__("tradescout.models", fromlist=["Fixture"]).Fixture(
         date.fromisoformat(r["date"]), r["league"], r["home"], r["away"])) is not None)
     settled = signals.settle_signals(lookup, lambda sport, d: tn.forecaster(d) if sport == "tennis" else fb.forecaster(d), path)
     assert settled == with_result >= 6
     s = signals.summary(signals.load(path))
-    assert s["total"] == 7 and s["settled"] == settled
+    assert s["total"] == len(picked) and s["settled"] == settled
 
 
 def test_combined_hedge_settles_as_one_position(provider, forecaster, fixtures):

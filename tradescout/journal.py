@@ -32,7 +32,7 @@ class JournalEntry:
     entry_price: float
     stake_money: float
     first_step: str
-    status: str = "open"  # open | won | lost
+    status: str = "open"  # open | won | lost | void (an in-play entry that never happened)
     pnl_money: Optional[float] = None
     pnl_per_unit: Optional[float] = None
     result: Optional[str] = None
@@ -149,6 +149,16 @@ class Journal:
             fx = Fixture(date.fromisoformat(e.date), e.league, e.home, e.away, None, None, meta)
             result = result_lookup(sport, fx)
             if result is None:
+                continue
+            strat = get_strategy(e.strategy)
+            own = strat.settle_entry(e, result) if hasattr(strat, "settle_entry") else None
+            if own is not None:
+                # settled from what was actually sent or matched (in-play entries, set betting), not from a re-fitted model
+                e.status, e.pnl_per_unit, e.pnl_money = own[0], round(own[1], 4), round(own[2], 2)
+                e.result = getattr(result, "score", None)
+                if e.status == "void":
+                    e.note = (e.note + "; " if e.note else "") + "no entry was matched: nothing to settle"
+                settled += 1
                 continue
             if sport == "tennis":
                 fx = Fixture(fx.date, fx.league, fx.home, fx.away, None, None,

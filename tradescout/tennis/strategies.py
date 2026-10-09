@@ -11,9 +11,13 @@ from ..autotrade import rules as R
 
 from ..model.inplay import exit_profit_back, exit_profit_lay, fair_price
 from ..models import MarketPrices
+from ..betting import round_to_tick
+from ..config import settings
 from ..strategies.base import OrderLeg, Scenario, Strategy, StrategyResult, entry, exit_, inplay, note, stop
+from ..value import net_ev
 from .data import TennisResult
 from .forecast import TennisForecast
+from .market_model import lay_limit, market_view, p_fav_from_quotes
 
 
 def _fav_prices(fc: TennisForecast, prices: MarketPrices) -> tuple:
@@ -210,6 +214,7 @@ class FavouriteStraightSets(Strategy):
     key = "tn_straight_sets"
     label = "Back favourite in straight sets"
     description = "Back the favourite to win without dropping a set in the Set Betting market. Settlement bet with a clear model edge check."
+    enabled_default = False  # superseded by tn_sets_value, which anchors every set score to the exchange's match odds instead of our Elo
     best_for = "Dominant favourites (70%+) on their best surface against opponents who do not hold serve well."
     avoid_when = "Best-of-five against a big server, or when the favourite is priced near evens."
     inplay = False
@@ -249,7 +254,235 @@ class FavouriteStraightSets(Strategy):
         return (1.0 if hit else 0.0), (self.net(price - 1) if hit else -1.0)
 
 
-TENNIS_STRATEGIES: list[Strategy] = [BackToLayFavouriteSet(), LayFavouriteEarlyBreak(), OverGames(), FavouriteStraightSets()]
+# ------------------------------------------------------------------------------------------------- market-anchored
+SETS_MODEL_WEIGHT = 0.6     # weight of the corrected, match-odds-derived probability against the set-betting market's own price
+SETS_CONFIDENCE = 0.85      # validated on a later holdout, but on Pinnacle closing prices, not on today's exchange mid
+LAY_SET1_MARGIN = 0.03      # the in-play limit keeps at least 3% per unit of liability over the validated probability
+LAY_SET1_WINDOW = 120.0     # seconds the entry order stays up after set 1 (roughly the set break)
+
+
+def _market_fav(prices: MarketPrices):
+    """(p_fav, 'home'|'away') from the exchange's match odds, or None without a two-sided book on both players."""
+    if prices is None or not hasattr(prices, "quote"):
+        return None
+    return p_fav_from_quotes(prices.quote("MATCH_ODDS", "home"), prices.quote("MATCH_ODDS", "away"))
+
+
+def _sets_home_away(result: TennisResult, home: str) -> tuple[int, int]:
+    w, l = result.set_score
+    return (w, l) if result.winner == home else (l, w)
+
+
+class SetsValue(Strategy):
+    key = "tn_sets_value"
+    label = "Set betting value against match odds"
+    description = ("Prices every set score from the exchange's own match odds, corrected for what independent-points tennis "
+                   "models get wrong (favourites win in straight sets more often than they imply), and backs or lays the set "
+                   "score whose Set Betting price is out of line with that. Held to the result.")
+    best_for = "Matches with a liquid match-odds market and a quoted Set Betting market; best-of-three ATP."
+    avoid_when = "Thin Set Betting books (wide spreads), a player carrying an injury, or a match-odds price that is moving fast."
+    inplay = False
+    settlement = "exact"
+
+    def trade_rules(self) -> list[dict]:
+        return []  # a settlement bet: nothing to do in play
+
+    def evaluate(self, fc: TennisForecast, prices: MarketPrices) -> StrategyResult | None:
+        mf = _market_fav(prices)
+        if mf is None:
+            return None  # every probability here is anchored to the exchange's match odds: without them there is nothing to say
+        p_fav, fav = mf
+        view = market_view(p_fav, fc.best_of, fc.surface)
+        probs = view.set_score_home_away(fav)
+        best = None
+        for key, p in probs.items():
+            q = prices.quote("SET_BETTING", key)
+            if q is None:
+                continue
+            for side, px in (("back", q.best_back), ("lay", q.best_lay)):
+                if not px or px <= 1.01:
+                    continue
+                ev = net_ev(p, px, side, settings.commission)
+                if best is None or ev > best[0]:
+                    best = (ev, key, side, px, p)
+        if best is None:
+            return None
+        ev, key, side, px, p = best
+        home, away = fc.fixture.home, fc.fixture.away
+        fav_name, dog_name = (home, away) if fav == "home" else (away, home)
+        a, b = (int(x) for x in key.split("-"))
+        who = home if a > b else away
+        label = f"{who} {max(a, b)}-{min(a, b)}"
+        fair = 1 / p
+        if side == "back":
+            scenarios = [Scenario(f"{label} lands", p, px - 1), Scenario("any other set score", 1 - p, -1.0)]
+            entry_text = f"Before the match: back {label} in Set Betting at {px:.2f} or higher (fair {fair:.2f})."
+            sizing = "stake"
+        else:
+            scenarios = [Scenario(f"anything but {label}", 1 - p, 1 / (px - 1)), Scenario(f"{label} lands", p, -1.0)]
+            entry_text = f"Before the match: lay {label} in Set Betting at {px:.2f} or lower (fair {fair:.2f}). Your liability is the unit risked."
+            sizing = "liability"
+        plan = [entry(entry_text), note("Held to the result: Set Betting settles on the final set score. A retirement voids nothing here: "
+                                         "Betfair settles Set Betting on retirement as a loss for the retiring player's selections, so check the rules.")]
+        rationale = [
+            f"Exchange match odds: {fav_name} {p_fav:.0%} (de-vigged back/lay midpoint).",
+            f"Set scores implied by that price after the validated correction: " +
+            ", ".join(f"{(home if int(k.split('-')[0]) > int(k.split('-')[1]) else away)} {max(map(int, k.split('-')))}-{min(map(int, k.split('-')))} {v:.0%}"
+                      for k, v in probs.items()),
+            f"{label}: fair {fair:.2f} against {side} {px:.2f} on the exchange; net {ev:+.1%} per unit risked after {settings.commission:.0%} commission before the value engine's shrinkage.",
+            "Correction fitted on 2021-23 ATP closing prices and kept only because it beat the plain model on 2024-25 (data/tennis_market_corrections.json).",
+        ]
+        warnings = [] if view.corrected.get("straight_fav") else ["No validated straight-sets correction for this format: plain model numbers."]
+        if not (fc.p_a >= 0.5) == (fav == "home"):
+            warnings.append(f"The exchange makes {fav_name} favourite; our Elo disagrees. The market is used.")
+        return StrategyResult("Set Betting", side, label, 0, fair, px, (p - 1 / px) if side == "back" else (1 / px - p), scenarios, plan, rationale, warnings,
+                              orders=[OrderLeg("SET_BETTING", key, side, round(px, 2), 1.0, sizing, "set score against match odds", p_model=p,
+                                               model_weight=SETS_MODEL_WEIGHT, confidence=SETS_CONFIDENCE)],
+                              rules=[], fav=fav)
+
+    def settle(self, fc: TennisForecast, result: TennisResult) -> tuple[float, float]:
+        """Replay settlement (no stored prices): back the favourite's straight-sets score at the corrected fair price
+        shaded by the usual overround. The journal settles real picks from their slip (settle_entry)."""
+        p_fav = fc.p_fav
+        fav = "home" if fc.p_a >= 0.5 else "away"
+        view = market_view(p_fav, fc.best_of, fc.surface)
+        need = fc.best_of // 2 + 1
+        key = f"{need}-0" if fav == "home" else f"0-{need}"
+        p = view.set_score_home_away(fav)[key]
+        price, _ = self.price_or_fair(None, p)
+        if result.retired:
+            return 0.0, -1.0
+        hit = _sets_home_away(result, fc.fixture.home) == tuple(int(x) for x in key.split("-"))
+        return (1.0 if hit else 0.0), (self.net(price - 1) if hit else -1.0)
+
+    def settle_entry(self, e, result: TennisResult):
+        """Settle a journal pick from the lines actually sent: (status, P/L per unit, P/L money) or None."""
+        lines = [l for l in (e.slip or []) if l.get("market") == "SET_BETTING"]
+        if not lines or result.retired:
+            return None
+        hs = _sets_home_away(result, e.home)
+        pnl = 0.0
+        risk = 0.0
+        for l in lines:
+            won_sel = hs == tuple(int(x) for x in str(l["selection"]).split("-"))
+            size, px = float(l.get("size") or 0), float(l.get("plan_price") or 0)
+            if l["side"] == "back":
+                pnl += size * (px - 1) * (1 - settings.commission) if won_sel else -size
+                risk += size
+            else:
+                pnl += -size * (px - 1) if won_sel else size * (1 - settings.commission)
+                risk += size * (px - 1)
+        if risk <= 0:
+            return None
+        return ("won" if pnl > 0 else "lost"), pnl / risk, pnl
+
+
+class LayFavLostSet1(Strategy):
+    key = "tn_lay_fav_lost_set1"
+    label = "Lay favourite after a clear first-set loss"
+    description = ("No bet before the match. If the favourite loses the first set 6-3 or wider (best of three), lay the favourite "
+                   "in Match Odds with a limit price that keeps a margin over the validated comeback rate, and hold to the result. "
+                   "Favourites beaten that clearly come back less often than independent-points pricing implies.")
+    best_for = "Best-of-three ATP matches with a liquid match-odds market; the favourite priced 1.3 to 2.0 before the start."
+    avoid_when = "Best of five (no validated correction), a favourite known to start slowly, or a market suspended through the set break."
+    inplay = True
+    settlement = "approximate"
+
+    def trade_rules(self, limit: float = 0.0) -> list[dict]:
+        rules = [R.rule("fav_won_set1", R.set_won(1, "fav"), R.hold("nothing is placed"), "Favourite wins set 1: no entry; the plan is complete.", final=True)]
+        if limit > 1.0:
+            rules.insert(0, R.rule("lost_set1_clear", R.set_won_easily(1, "dog", 3), R.enter(0, "lay", limit, 1.0, LAY_SET1_WINDOW),
+                                   f"Favourite loses set 1 6-3 or wider: lay the favourite at {limit:.2f} or lower for two minutes.", final=True))
+        rules.append(R.rule("lost_set1_close", R.set_won(1, "dog"), R.hold("the loss was narrow (7-5, 6-4 or a tiebreak), so nothing is placed"), "Favourite loses set 1 narrowly (7-5, 6-4 or a tiebreak): no entry.", final=True))
+        return rules
+
+    def evaluate(self, fc: TennisForecast, prices: MarketPrices) -> StrategyResult | None:
+        if fc.best_of != 3:
+            return None
+        mf = _market_fav(prices)
+        if mf is None:
+            return None
+        p_fav, fav = mf
+        if not 0.5 <= p_fav <= 0.78:
+            return None  # outside 1.28-2.0 the comeback price is either tiny or the 'favourite' is a coin flip
+        view = market_view(p_fav, 3, fc.surface)
+        if not view.corrected.get("after_lost_set1_clear"):
+            return None
+        q = view.after_lost_set1_clear
+        limit = round_to_tick(lay_limit(q, settings.commission, LAY_SET1_MARGIN), "back")  # snap down: never above the value limit
+        m_q = view.markov["after_lost_set1"]
+        # how often the trigger happens: the favourite loses set 1 and concedes 6-3 or wider (roughly half of set-1 losses)
+        p_trigger = (1 - view.p_set1) * 0.5
+        home, away = fc.fixture.home, fc.fixture.away
+        fav_name, dog_name = (home, away) if fav == "home" else (away, home)
+        win_lay = (1 - settings.commission) / (limit - 1)
+        scenarios = [
+            Scenario(f"{fav_name} win set 1 or lose it narrowly: no bet", 1 - p_trigger, 0.0),
+            Scenario(f"{fav_name} lose set 1 6-3 or wider, then lose the match (lay at {limit:.2f} wins)", p_trigger * (1 - q), win_lay),
+            Scenario(f"{fav_name} lose set 1 6-3 or wider, then come back (lay at {limit:.2f} loses)", p_trigger * q, -1.0),
+        ]
+        plan = [
+            note("No bet before the match. Arm this plan; TradeScout watches the live score."),
+            inplay(f"If {dog_name} take the first set 6-3 or wider: lay {fav_name} in Match Odds at {limit:.2f} or lower, liability = your stake. "
+                  f"The order stays up for two minutes, then any unmatched part is cancelled."),
+            note("Whatever matched runs to the result. No trading out: the edge is in the comeback rate, not in price swings."),
+            stop(f"If {fav_name} win set 1, or lose it 7-5, 6-4 or in a tiebreak: nothing is placed and the plan ends."),
+        ]
+        rationale = [
+            f"Exchange match odds: {fav_name} {p_fav:.0%}. Independent-points pricing gives them {m_q:.0%} to win after losing set 1.",
+            f"After a set-1 loss of 6-3 or wider, favourites at this price came back {q:.0%} of the time (ATP 2021-25; the correction fitted on "
+            f"2021-23 held up on 2024-25: a 6-3-or-wider loser came back 27% against 35% from independent points).",
+            f"Lay limit {limit:.2f}: at that price or lower the lay returns at least {LAY_SET1_MARGIN:.0%} per unit of liability after "
+            f"{settings.commission:.0%} commission at the validated {q:.0%}. A fair independent-points price would be about {1 / m_q:.2f}.",
+            "Unproven on the exchange: whether Betfair's in-play price after the set offers this limit is measured by your own armed trades.",
+        ]
+        summary = (f"Conditional in-play entry: if {fav_name} lose set 1 6-3 or wider, lay them at {limit:.2f} or lower "
+                   f"(validated comeback rate {q:.0%}; the limit keeps a {LAY_SET1_MARGIN:.0%} margin). Arm Auto-trade to let TradeScout watch "
+                   "and place it; nothing is bet before the start.")
+        info = {"market": "MATCH_ODDS", "selection": fav, "side": "lay", "limit": limit, "valid_seconds": LAY_SET1_WINDOW, "p_selection": q,
+                "p_market": m_q, "p_trigger": p_trigger, "p_fav": p_fav, "trigger": "favourite loses set 1 6-3 or wider", "summary": summary}
+        return StrategyResult("Match Odds (in play)", "lay", fav_name, 0, 1 / q, None, None, scenarios, plan, rationale,
+                              orders=[], rules=self.trade_rules(limit), fav=fav, entry="inplay", entry_info=info)
+
+    def settle(self, fc: TennisForecast, result: TennisResult) -> tuple[float, float]:
+        """Replay settlement with the exchange assumed to price like independent points (a scenario, not evidence):
+        entered only on a clear set-1 loss by the favourite, at the independent-points price plus 2% spread when that
+        is within the limit."""
+        if fc.best_of != 3:
+            return 0.0, 0.0
+        sets = result.sets()
+        if not sets:
+            return 0.0, 0.0
+        fav_name = fc.fav_name()
+        fav_is_winner = result.winner == fav_name
+        f1, d1 = (sets[0][0], sets[0][1]) if fav_is_winner else (sets[0][1], sets[0][0])
+        if f1 > d1 or f1 > 3:
+            return 0.0, 0.0
+        view = market_view(fc.p_fav, 3, fc.surface)
+        q = view.after_lost_set1_clear
+        limit = lay_limit(q, settings.commission, LAY_SET1_MARGIN)
+        price = 1.02 / view.markov["after_lost_set1"]
+        if price > limit:
+            return 0.0, 0.0
+        if fav_is_winner:
+            return 0.0, -1.0
+        return 1.0, (1 - settings.commission) / (price - 1)
+
+    def settle_entry(self, e, result: TennisResult):
+        """A journal pick of this plan has money only if the engine entered; settle from what matched."""
+        if e.placed not in ("live", "paper") or not e.slip:
+            return ("void", 0.0, 0.0)
+        l = e.slip[0]
+        size, px = float(l.get("size") or 0), float(l.get("plan_price") or 0)
+        if size <= 0 or px <= 1:
+            return ("void", 0.0, 0.0)
+        fav_name = e.home if (e.fav or "home") == "home" else e.away
+        liab = size * (px - 1)
+        pnl = -liab if result.winner == fav_name else size * (1 - settings.commission)
+        return ("won" if pnl > 0 else "lost"), pnl / liab, pnl
+
+
+TENNIS_STRATEGIES: list[Strategy] = [BackToLayFavouriteSet(), LayFavouriteEarlyBreak(), OverGames(), FavouriteStraightSets(), SetsValue(), LayFavLostSet1()]
 
 
 def get_tennis_strategy(key: str) -> Strategy:

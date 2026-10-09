@@ -17,6 +17,10 @@ Actions act on one leg of the plan (its market and selection):
     free_bet leg  lay off the original back stake: no loss if it fails, profit if it lands
     scale_in leg fraction   add the same bet, fraction of the plan's unit, at the price now on offer
     hold          nothing to do; the leg runs to the result
+    enter leg side limit fraction valid_seconds
+                  open the position in play (plans with no pre-match bet): a limit order at the plan's own value
+                  limit (the most for a lay, the least for a back), sized as `fraction` of the unit (a liability for
+                  a lay), left on the exchange for `valid_seconds` and then cancelled; whatever matched is held
 
 `final` ends the job once the action has gone through. Rules fire at most once, in order.
 """
@@ -85,8 +89,12 @@ def scale_in(leg: int, fraction: float) -> dict:
     return {"a": "scale_in", "leg": leg, "fraction": fraction}
 
 
-def hold() -> dict:
-    return {"a": "hold"}
+def hold(why: str = "") -> dict:
+    return {"a": "hold", "why": why} if why else {"a": "hold"}
+
+
+def enter(leg: int, side: str, limit: float, fraction: float = 1.0, valid_seconds: float = 120.0) -> dict:
+    return {"a": "enter", "leg": leg, "side": side, "limit": round(float(limit), 2), "fraction": fraction, "valid_seconds": valid_seconds}
 
 
 def rule(rid: str, when: dict, do: dict, text: str, final: bool = False) -> dict:
@@ -222,9 +230,14 @@ def describe_action(a: dict, legs: list[dict]) -> str:
         return f"{opp} {what} at the best price on offer so the result is the same whatever happens (green up, or close for the smaller loss)"
     if kind == "free_bet":
         return f"lay {what} for the original stake: nothing lost if it fails, profit if it lands"
+    if kind == "enter":
+        lim = "or lower" if a.get("side") == "lay" else "or higher"
+        risk = "liability" if a.get("side") == "lay" else "stake"
+        return (f"{a.get('side', '')} {what} at {a.get('limit', 0):.2f} {lim} with {a.get('fraction', 1):.0%} of the plan {risk}; "
+                f"the order stays up for {a.get('valid_seconds', 120):.0f} seconds, then any unmatched part is cancelled and what matched runs to the result")
     if kind == "scale_in":
         return f"{leg.get('side', '')} {what} again with {a.get('fraction', 0):.0%} of the plan stake at the price on offer"
-    return "do nothing; let it run to the result"
+    return a.get("why") or "do nothing; let it run to the result"
 
 
 def describe(r: dict, legs: list[dict], names: dict[str, Any]) -> str:

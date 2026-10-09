@@ -100,7 +100,7 @@ Both "positive" football strategies were **negative on the 2024-25 tuning season
 
 | Tennis strategy | n | Strike | Predicted | ROI/unit | 95% CI | Default |
 |---|---|---|---|---|---|---|
-| Straight sets (favourite) | 1,095 | 52.1% | 52.1% | −3.6% | −9.2%..+2.0% | on |
+| Straight sets (favourite) | 1,095 | 52.1% | 52.1% | −3.6% | −9.2%..+2.0% | off (replaced by set betting value) |
 | Over total games | 2,327 | 53.6% | 54.9% | −5.9% | −9.5%..−2.5% | on |
 | Back-to-lay after set one | 2,300 | 58.8% | 58.4% | −6.0% | −7.4%..−4.6% | off |
 | Lay favourite, early break | 1,081 | unverifiable | | | | off |
@@ -108,6 +108,38 @@ Both "positive" football strategies were **negative on the 2024-25 tuning season
 The tennis probabilities are well calibrated; every tennis plan loses at model prices once the
 overround, friction and commission are charged. Edge, if any, has to come from exchange mispricing,
 which is what the value engine measures and the signals log will record.
+
+### Market-anchored tennis (October 2026)
+
+Our Elo does not beat the exchange's match odds, so the two newer tennis plans do not try to. They take
+the probability the exchange's own match-odds market implies and correct only what the
+independent-points model gets wrong about the *shape* of a match, using ATP closing prices with set
+scores (fitted 2021-23, kept only where it beat the plain model on 2024-25;
+`python -m tradescout.eval.tennis_market_fit`, results in `data/tennis_market_corrections.json`):
+
+| Quantity (best of 3, 2024-25 holdout) | Independent points | Actual | Corrected log-loss |
+|---|---|---|---|
+| Favourite wins in straight sets | 38.2% | 44.9% | 0.6667 → 0.6562 |
+| Underdog wins in straight sets | 15.7% | 18.7% | 0.4662 → 0.4627 |
+| Favourite comes back after losing set 1 | 35.5% | 31.4% | 0.6134 → 0.6109 |
+| ... after losing set 1 6-3 or wider | 34.9% | 27.4% | 0.5980 → 0.5900 |
+| ... after losing set 1 7-5, 6-4 or in a tiebreak | 35.9% | 33.7% | 0.6226 → 0.6220 |
+
+* **Set betting value against match odds** (`tn_sets_value`, on): prices every set score from the
+  match odds with those corrections and backs or lays the set score the Set Betting market has out of
+  line, through the usual value engine. Settles at the result.
+* **Lay favourite after a clear first-set loss** (`tn_lay_fav_lost_set1`, on): no bet before the
+  start. Decision **ARM**: arm it and the auto-trader lays the favourite in play only if they lose set
+  1 6-3 or wider (best of 3), with a limit price that keeps a 3% margin per unit of liability over the
+  validated comeback rate. The order rests for two minutes, then the rest is cancelled; what matched
+  runs to the result. Works on the free Delayed key (the trigger is the live score, the limit is the
+  value test).
+
+Neither is proven on Betfair: no historical exchange set-betting or in-play prices were available. If
+the exchange priced like the plain independent-points model, the in-play lay would have returned
++9.4% per unit of liability on the 566 holdout triggers (95% CI +3.7%..+15.1%), and +2.2% if the
+exchange already shades the comeback 10% lower. Expect about one trigger a day across the ATP tour.
+Your own armed trades and the signals log are the measurement.
 
 ## Data sources
 

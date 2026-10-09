@@ -35,7 +35,7 @@ from .calibration import Calibration
 
 SHRINK_N = 150.0
 # strategies whose plan return is only established at the final result (no modelled in-play exits)
-STATIC_STRATEGIES = {"over25_ins", "cs_basket", "tn_over_games", "tn_straight_sets"}
+STATIC_STRATEGIES = {"over25_ins", "cs_basket", "tn_over_games", "tn_straight_sets", "tn_sets_value"}
 EVIDENCE_WEIGHT = {"exchange-priced-static": 1.0, "simulated-inplay": 0.6, "model-synthetic": 0.0}
 
 
@@ -69,8 +69,10 @@ class Scorer:
         for leg in r.orders:
             quote = prices.quote(leg.market, leg.selection) if prices is not None else None
             size = max(2.0, unit_money * leg.fraction) if leg.sizing == "stake" else max(2.0, unit_money * leg.fraction / max(leg.price - 1, 0.01))
-            out.append(assess(leg.p_model, leg.side, quote, leg.price, size, leg.market, fc.confidence, settings.commission,
-                              settings.min_edge, settings.max_spread, model_weight_scale=settings.model_weight_scale))
+            conf = fc.confidence if leg.confidence is None else leg.confidence
+            out.append(assess(leg.p_model, leg.side, quote, leg.price, size, leg.market, conf, settings.commission,
+                              settings.min_edge, settings.max_spread, model_weight=leg.model_weight,
+                              model_weight_scale=1.0 if leg.model_weight is not None else settings.model_weight_scale))
         return out, list(r.orders)
 
     def score(self, fixture: Fixture, fc, strategy: Strategy, r: StrategyResult, prices: Optional[MarketPrices] = None,
@@ -97,6 +99,19 @@ class Scorer:
             decision = "NO TRADE"
             reasons = [prices.note or "Markets are not open for pre-match entry."]
             evidence = "model-synthetic"
+        elif r.entry == "inplay":
+            # Conditional in-play entry: nothing goes on before the start. The engine enters only when the trigger
+            # happens, with a limit price that keeps at least the stated margin over the validated probability, so
+            # the edge is enforced by the order itself. Whether the exchange ever offers that price is not known
+            # in advance: this is ARM (arm it to let the engine try), never TRADE.
+            info = r.entry_info
+            ev_cons = ev_model = None
+            p_cons, p_mkt = info.get("p_selection"), None  # no exchange price for the in-play moment exists yet
+            execution = 0.0
+            decision = "ARM" if prices is not None and prices.available else "RESEARCH"
+            reasons = ([info.get("summary", "Conditional in-play entry.")] if decision == "ARM" else
+                       ["No exchange match-odds price, so the in-play limit cannot be anchored to the market. NO TRADE until Betfair prices are in."])
+            evidence = "conditional-inplay"
         elif legs and len(priced) == len(legs):
             # stake-weighted entry edge across legs (fractions sum to 1 within a sizing type)
             ev_cons = float(sum(o.fraction * l.ev_conservative for o, l in zip(orders, legs)))
@@ -134,7 +149,10 @@ class Scorer:
             evidence = "model-synthetic"
 
         # ---- rank score (transparent): 10 points per 1% conservative edge x execution x evidence
-        if decision in ("TRADE", "NO TRADE"):
+        if decision == "ARM":
+            # ordering only: how often the trigger happens; capped below the TRADE band (no edge is proven yet)
+            score = float(np.clip(100.0 * r.entry_info.get("p_trigger", 0.0) + 15.0, 0, 39))
+        elif decision in ("TRADE", "NO TRADE"):
             score = float(np.clip(1000.0 * max(ev_cons or 0.0, 0.0) * execution * EVIDENCE_WEIGHT[evidence], 0, 100))
             if decision == "NO TRADE":
                 score = min(score, 39.0)  # never looks like a trade
@@ -144,7 +162,21 @@ class Scorer:
 
         # ---- stake from the risk engine (conservative probability where we have one)
         liability_per_unit = legs[0].liability_per_unit if legs else 1.0
-        if decision == "TRADE":
+        if decision == "ARM":
+            # Kelly on the conditional entry at its limit price and validated probability: the stake is a liability
+            # for a lay (the unit risked), sized as if the trigger had happened
+            info = r.entry_info
+            px, q = float(info.get("limit", 0) or 0), float(info.get("p_selection", 0) or 0)
+            if px > 1 and 0 < q < 1:
+                if info.get("side") == "lay":
+                    k_win, k_p = (1 - settings.commission) / (px - 1), 1 - q
+                else:
+                    k_win, k_p = (px - 1) * (1 - settings.commission), q
+                advice = advise_stake(k_p, k_win, -1.0, 1.0, bank, self.limits, exposure, strategy.key, sport)
+            else:
+                from ..risk import StakeAdvice
+                advice = StakeAdvice(0.0, 0.0, 0.0, 0.0, [], True, "No stake: the entry limit could not be set.")
+        elif decision == "TRADE":
             # Kelly on the entry bet itself at the conservative probability: back wins (price-1)(1-c)
             # per unit staked, a lay wins (1-c)/(price-1) per unit of liability; both lose 1 unit.
             leg0, order0 = legs[0], orders[0]
@@ -176,7 +208,8 @@ class Scorer:
             score=score, stake_pct=stake_pct, plan=r.plan, rationale=r.rationale, warnings=warnings,
             scenarios=[{"label": s.label, "prob": s.prob, "profit": s.profit} for s in r.scenarios],
             orders=list(r.orders), rules=list(getattr(r, "rules", []) or []),
-            fav=(getattr(fc, "favourite", None) or ("home" if getattr(fc, "p_a", 0.5) >= 0.5 else "away")), decision=decision, decision_reasons=reasons, evidence=evidence,
+            fav=(r.fav or getattr(fc, "favourite", None) or ("home" if getattr(fc, "p_a", 0.5) >= 0.5 else "away")), entry=r.entry, entry_info=dict(r.entry_info),
+            decision=decision, decision_reasons=reasons, evidence=evidence,
             p_conservative=p_cons, ev_conservative=ev_cons, ev_model=ev_model, p_market=p_mkt, execution=execution,
             legs=[l.to_dict() for l in legs], max_loss_per_unit=max_loss, stake_money=advice.stake_money, risk_money=advice.risk_money,
             risk_notes=([advice.reason] if advice.reason else []) + advice.caps_hit, sport=sport,

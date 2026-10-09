@@ -195,7 +195,36 @@ def _autotrade_done(job) -> None:
         if e.id == job.entry_id:
             e.note = (e.note + "; " if e.note else "") + f"auto-trade {job.state}: {job.status}"
             journal.save()
+            _record_inplay_entry(job, e)
             break
+
+
+def _record_inplay_entry(job, e) -> None:
+    """A conditional in-play entry has no pre-match slip: once the engine is done, write what it actually matched into
+    the pick (live) or what the simulation took (paper), so the journal settles it on the real price and size."""
+    if not any((r.get("do") or {}).get("a") == "enter" for r in job.rules) or not job.legs:
+        return
+    leg = job.legs[0]
+    side = leg["side"]
+    if job.simulate:
+        bets = [b for b in job.sim_bets if b["leg"] == 0]
+        size = sum(b["size"] for b in bets)
+        price = (sum(b["size"] * b["price"] for b in bets) / size) if size else 0.0
+        placed, refs = "paper", []
+    else:
+        x = (job.exposure or {}).get("0") or {}
+        size = float(x.get("laid" if side == "lay" else "backed") or 0.0)
+        # a lay of stake S at average price P loses S(P-1) if the selection wins: recover P from the position
+        price = (1 - float(x.get("win") or 0.0) / size) if (size and side == "lay") else (1 + float(x.get("win") or 0.0) / size if size else 0.0)
+        placed, refs = "live", list(job.bet_ids)
+    if size < 0.01 or price <= 1.0:
+        return
+    risk = round(size * (price - 1), 2) if side == "lay" else round(size, 2)
+    line = {"market": leg["market"], "market_label": leg.get("market_label"), "selection": leg["selection"], "runner_name": leg.get("runner_name"),
+            "side": side, "plan_price": round(price, 2), "size": round(size, 2), "liability": risk, "payout": round(size if side == "lay" else size * (price - 1), 2),
+            "fraction": 1.0, "market_id": leg.get("market_id"), "selection_id": leg.get("selection_id"), "handicap": leg.get("handicap", 0.0)}
+    journal.attach_slip(e.id, [line], placed=placed, refs=refs, total=risk if placed == "live" else 0.0,
+                        note=f"entered in play: {side} £{size:.2f} at {price:.2f}", stake_money=risk)
 
 
 autotrader = AutoTrader(lambda: rt.betfair, AUTOTRADE_PATH, jurisdiction=lambda: settings.betfair_jurisdiction,
@@ -227,6 +256,10 @@ def _idea_json(i, fc, result, sport: str) -> dict:
         "placed_entry": next((e.id for e in journal.entries if e.date == i.fixture.date.isoformat() and e.home == i.fixture.home and e.away == i.fixture.away
                               and e.strategy == i.strategy and e.placed in ("live", "paper")), None),
         "automatable": bool(i.rules),
+        "entry": i.entry, "entry_info": i.entry_info,
+        "armed_job": next((j.id for j in autotrader.active() if j.entry_id in {e.id for e in journal.entries if e.date == i.fixture.date.isoformat()
+                                                                                 and e.home == i.fixture.home and e.away == i.fixture.away and e.strategy == i.strategy}), None)
+        if i.entry == "inplay" else None,
     }
     if result is not None:
         hit, pnl = strat.settle(fc, result)
@@ -272,7 +305,7 @@ def _scan_json(scan: ScanResult, sport: str) -> dict:
         result = rt.result_for(sport, fx)
         ideas = [i for i in scan.ideas if i.fixture.label == fx.label]
         trade_ideas = [i for i in ideas if i.decision == "TRADE"]
-        best = trade_ideas[0] if trade_ideas else (ideas[0] if ideas else None)
+        best = trade_ideas[0] if trade_ideas else next((i for i in ideas if i.decision == "ARM"), ideas[0] if ideas else None)
         ps = scan.price_status.get(fx.label) or {}
         matches.append({
             "price_status": ps.get("status", "none"), "price_note": ps.get("note", ""), "price_as_of": ps.get("as_of"),
@@ -289,7 +322,7 @@ def _scan_json(scan: ScanResult, sport: str) -> dict:
             "result": _result_json(sport, result),
             "ideas": [_idea_json(i, fc, result, sport) for i in ideas],
         })
-    decisions = {"TRADE": 0, "NO TRADE": 0, "RESEARCH": 0}
+    decisions = {"TRADE": 0, "ARM": 0, "NO TRADE": 0, "RESEARCH": 0}
     for i in scan.ideas:
         decisions[i.decision] = decisions.get(i.decision, 0) + 1
     feed = dict(scan.feed) if scan.feed else None
@@ -907,6 +940,86 @@ def _job_for_entry(entry_id: str, simulate: bool, mode: str = "auto") -> tuple:
                         "In 'act for me' mode TradeScout finds the real price by trading: a first part of each hedge goes with a protective limit, the real matched "
                         "price comes back at once, and the rest is sized from it. In 'alert me' mode you act yourself with Cash Out, which uses live prices.")
     return job, names, warnings
+
+
+# ---- arming a conditional in-play entry (a plan with no pre-match bet)
+class ArmIdeaIn(SlipIn):
+    simulate: bool = False
+    mode: str = "auto"
+    confirm: bool = False
+
+
+def _job_for_idea(body: ArmIdeaIn) -> tuple:
+    """Build (without arming) the job for an ARM idea: the engine watches the match and places the entry itself when
+    the trigger happens, at the plan's value limit. Returns (job, idea, sport, warnings)."""
+    if not settings.autotrade:
+        raise HTTPException(403, "Auto-trading is switched off. Turn it on in Settings > Betting first.")
+    idea, _, sport = _rebuild_idea(body)
+    if idea.entry != "inplay":
+        raise HTTPException(400, "This plan starts with a pre-match bet: place it through the bet slip, then use Auto-trade on it.")
+    if idea.decision != "ARM":
+        raise HTTPException(409, " ".join(idea.decision_reasons[:2]) or "This plan cannot be armed right now.")
+    client = _price_client(sport)
+    if client is None or rt.betfair is None:
+        raise HTTPException(400, "Betfair is not set up: add the application key, username and password in Settings.")
+    simulate = bool(body.simulate)
+    mode = "alert" if body.mode == "alert" else "auto"
+    if not simulate and mode == "auto":
+        if settings.betting_mode != "live":
+            raise HTTPException(403, "Betting mode is not Live: arm it in simulate or alert mode, or switch to Live in Settings > Betting.")
+        if not rt.betfair_ok:
+            raise HTTPException(400, "Betfair is not connected.")
+    info = idea.entry_info
+    full = client.resolve_full(idea.fixture, info["market"], info["selection"])
+    if not full:
+        raise HTTPException(404, "The favourite's Match Odds market could not be found on the exchange.")
+    limit = float(info["limit"])
+    floor = round(2.0 * (limit - 1) + 0.01, 2) if info["side"] == "lay" else 2.0  # smallest liability whose stake clears the £2 minimum
+    risk = float(body.stake_money) if body.stake_money else max(round(idea.stake_money or 0.0, 2), floor)
+    size = round(risk / (limit - 1), 2) if info["side"] == "lay" else risk
+    leg = {"market": info["market"], "market_label": "Match Odds", "market_id": full["market_id"], "selection": info["selection"],
+           "selection_id": full["selection_id"], "handicap": float(full.get("handicap") or 0.0), "side": info["side"], "entry_price": limit,
+           "size": size, "runner_name": full.get("runner_name")}
+    fx = idea.fixture
+    event_id = str(fx.fixture_id)[3:] if str(fx.fixture_id or "").startswith("bf:") else None
+    job = new_job(entry_id="", sport=sport, date=fx.date.isoformat(), home=fx.home, away=fx.away, fav=idea.fav or "home", strategy=idea.strategy,
+                  strategy_label=idea.strategy_label, event_id=event_id, legs=[leg], rules=list(idea.rules), unit=risk, max_liability=round(risk + 0.01, 2),
+                  simulate=simulate, market_start=None, bet_ids=[], mode=mode)
+    warnings = [info.get("summary", "")]
+    if risk < floor:
+        warnings.append(f"A liability of £{risk:.2f} gives a stake under the £2 exchange minimum at {limit:.2f}: the entry would be skipped. Use at least £{floor:.2f}.")
+    cap = round(rt.limits.max_per_trade * settings.bank, 2)
+    if risk > cap + 1e-9:
+        warnings.append(f"£{risk:.2f} at risk is above your per-trade cap of £{cap:.2f} ({rt.limits.max_per_trade:.0%} of bank).")
+    if not event_id:
+        warnings.append("The exchange event could not be identified, so there is no live score: the trigger cannot fire.")
+    if rt.betfair.health.delayed:
+        warnings.append("Delayed application key: fine for this plan. The trigger is the live score (not delayed) and the limit price is the value test, "
+                        "so Betfair matches the order at the real price if it is within the limit; nothing depends on the delayed prices.")
+    warnings.append("Evidence: the comeback rate is validated on ATP closing prices (2021-23 fit, 2024-25 holdout). Whether Betfair's in-play price "
+                    "reaches the limit, and how often, is not yet measured: treat the first weeks as measurement, at small stakes.")
+    return job, idea, sport, [w for w in warnings if w]
+
+
+@app.post("/api/autotrade/preview_idea")
+def autotrade_preview_idea(body: ArmIdeaIn):
+    job, idea, sport, warnings = _job_for_idea(body)
+    return {"job": _job_view(job), "warnings": warnings, "simulate": job.simulate, "delayed": bool(rt.betfair and rt.betfair.health.delayed),
+            "entry_info": idea.entry_info, "stake_advised": round(idea.stake_money or 0.0, 2)}
+
+
+@app.post("/api/autotrade/arm_idea")
+def autotrade_arm_idea(body: ArmIdeaIn):
+    if not body.confirm:
+        raise HTTPException(400, "Arming needs your confirmation.")
+    job, idea, sport, warnings = _job_for_idea(body)
+    e = journal.add(idea, job.unit, note="in-play entry armed" + (" (simulate)" if job.simulate else " (alert me)" if job.mode == "alert" else ""))
+    e.sport = sport
+    journal.save()
+    job.entry_id = e.id
+    job = autotrader.arm(job)
+    rt.cache.pop(f"{sport}:{body.date}", None)
+    return {"ok": True, "job": _job_view(job), "warnings": warnings, "entry_id": e.id}
 
 
 # ---- adopting a bet placed on Betfair itself

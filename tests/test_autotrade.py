@@ -303,6 +303,98 @@ def test_tennis_back_to_lay_greens_after_set_one(bf, fake, tmp_path):
     assert abs(exp.win - exp.lose) < 0.1 and exp.worst > 0
 
 
+# ------------------------------------------------------------------ conditional in-play entry (no pre-match bet)
+def _tennis_entry(bf, ex, k, limit, rules=None, simulate=False, mode="auto"):
+    from tradescout.data.betfair_tennis import BetfairTennis
+    from tradescout.tennis.data import TennisProvider
+    from tradescout.tennis.strategies import LayFavLostSet1
+    bt = BetfairTennis(bf, TennisProvider())
+    fx = bt.fixtures(DAY)[k]
+    full = bt.resolve_full(fx, "MATCH_ODDS", "home")
+    rules = rules or LayFavLostSet1().trade_rules(limit)
+    job = new_job(entry_id=f"arm-{k}", sport="tennis", date=DAY.isoformat(), home=fx.home, away=fx.away, fav="home", strategy="tn_lay_fav_lost_set1",
+                  strategy_label="Lay fav after set 1", event_id=str(fx.fixture_id)[3:],
+                  legs=[{"market": "MATCH_ODDS", "market_label": "Match Odds", "market_id": full["market_id"], "selection": "home",
+                         "selection_id": full["selection_id"], "handicap": 0.0, "side": "lay", "entry_price": limit, "size": round(10.0 / (limit - 1), 2),
+                         "runner_name": full["runner_name"]}],
+                  rules=rules, unit=10.0, max_liability=10.01, simulate=simulate, mode=mode)
+    name = fx.meta["betfair_names"][0] + " v " + fx.meta["betfair_names"][1]
+    return job, name, fx, full
+
+
+def test_inplay_entry_lays_the_favourite_after_a_clear_first_set_loss(bf, fake, tmp_path):
+    url, ex = fake
+    t = _trader(bf, tmp_path)
+    job, name, fx, full = _tennis_entry(bf, ex, 1, 3.0)
+    t.arm(job)
+    ex.control({"play_tennis": {"event": name, "sets": [[2, 3]], "set_counts": [0, 0]}})
+    n = len(ex.orders)
+    t.tick()
+    assert job.state == "live" and len(ex.orders) == n  # in play with no position is normal here: no 'never matched' expiry
+    ex.control({"play_tennis": {"event": name, "sets": [[3, 6], [0, 0]], "set_counts": [0, 1]}})
+    ex.control({"price": {"event": name, "market_type": "MATCH_ODDS", "runner": fx.meta["betfair_names"][0], "back": 2.56, "lay": 2.6}})
+    t.tick()
+    sent = ex.orders[n:]
+    assert len(sent) == 1 and sent[0]["side"] == "LAY" and sent[0]["priceSize"]["price"] == 3.0 and sent[0]["priceSize"]["size"] == pytest.approx(5.0)
+    assert sent[0]["averagePriceMatched"] == 2.6  # Betfair gives the better price on offer, not the limit
+    assert job.state == "done" and "lost_set1_clear" in job.fired
+    exp = P.exposure([o for o in ex.orders if o["betId"] in job.bet_ids], full["selection_id"])
+    assert exp.laid == pytest.approx(5.0) and exp.worst == pytest.approx(-8.0)  # 5 at 2.60: liability 8, under the plan's 10
+
+
+def test_inplay_entry_rests_for_its_window_then_cancels(bf, fake, tmp_path):
+    url, ex = fake
+    t = _trader(bf, tmp_path)
+    rules = [R.rule("go", R.set_won_easily(1, "dog", 3), R.enter(0, "lay", 3.0, 1.0, 1.0), "clear loss: enter", final=True),
+             R.rule("close", R.set_won(1, "dog"), R.hold(), "narrow loss: nothing", final=True)]
+    job, name, fx, full = _tennis_entry(bf, ex, 2, 3.0, rules=rules)
+    t.arm(job)
+    ex.control({"play_tennis": {"event": name, "sets": [[2, 6], [0, 0]], "set_counts": [0, 1]}})
+    ex.control({"price": {"event": name, "market_type": "MATCH_ODDS", "runner": fx.meta["betfair_names"][0], "back": 3.3, "lay": 3.4}})
+    n = len(ex.orders)
+    t.tick()
+    assert len(ex.orders) == n + 1 and ex.orders[-1]["status"] == "EXECUTABLE" and job.state == "live"
+    assert "close" not in job.fired  # the later 'narrow loss' rule must not end the job while the entry rests
+    t.tick()
+    assert len(ex.orders) == n + 1 and job.state == "live" and "resting" in job.status.lower()
+    time.sleep(1.1)
+    t.tick()
+    assert job.state == "done" and "nothing matched" in job.log[-2]["text"] and ex.orders[-1]["sizeRemaining"] == 0
+
+
+def test_inplay_entry_skipped_after_a_narrow_loss_or_a_won_set(bf, fake, tmp_path):
+    url, ex = fake
+    t = _trader(bf, tmp_path)
+    job, name, fx, full = _tennis_entry(bf, ex, 3, 3.0)
+    t.arm(job)
+    n = len(ex.orders)
+    ex.control({"play_tennis": {"event": name, "sets": [[5, 7], [0, 0]], "set_counts": [0, 1]}})
+    t.tick()
+    assert job.state == "done" and job.fired == ["lost_set1_close"] and len(ex.orders) == n
+    job2, name2, fx2, _ = _tennis_entry(bf, ex, 4, 3.0)
+    t.arm(job2)
+    ex.control({"play_tennis": {"event": name2, "sets": [[6, 1], [0, 0]], "set_counts": [1, 0]}})
+    t.tick()
+    assert job2.state == "done" and job2.fired == ["fav_won_set1"] and len(ex.orders) == n
+
+
+def test_inplay_entry_simulate_and_alert(bf, fake, tmp_path):
+    url, ex = fake
+    t = _trader(bf, tmp_path)
+    job, name, fx, full = _tennis_entry(bf, ex, 5, 3.0, simulate=True)
+    t.arm(job)
+    n = len(ex.orders)
+    ex.control({"play_tennis": {"event": name, "sets": [[1, 6], [0, 0]], "set_counts": [0, 1]}})
+    ex.control({"price": {"event": name, "market_type": "MATCH_ODDS", "runner": fx.meta["betfair_names"][0], "back": 2.7, "lay": 2.74}})
+    t.tick()
+    assert len(ex.orders) == n and job.state == "done" and job.sim_bets == [{"leg": 0, "side": "lay", "price": 2.74, "size": pytest.approx(5.75, abs=0.01)}]
+    job2, name2, fx2, _ = _tennis_entry(bf, ex, 6, 3.0, mode="alert")
+    t.arm(job2)
+    ex.control({"play_tennis": {"event": name2, "sets": [[3, 6], [0, 0]], "set_counts": [0, 1]}})
+    t.tick()
+    assert len(ex.orders) == n and job2.alerts and "lay" in job2.alerts[0]["text"] and "3.00 or lower" in job2.alerts[0]["text"]
+
+
 # ------------------------------------------------------------------ delayed application key
 def test_delayed_key_hedges_at_the_real_price_not_the_stale_one(bf, fake, fixtures, tmp_path, monkeypatch):
     import tradescout.autotrade.engine as eng

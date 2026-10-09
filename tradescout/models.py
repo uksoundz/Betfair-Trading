@@ -177,8 +177,10 @@ class TradeIdea:
     orders: list = field(default_factory=list)  # [OrderLeg] the pre-match selections this plan needs
     rules: list = field(default_factory=list)   # in-play steps as machine rules, used only when the user arms auto-trading
     fav: str = ""                               # home | away: which side the model makes favourite (the rules refer to it)
+    entry: str = "prematch"                     # prematch | inplay (conditional entry placed by the engine on a trigger)
+    entry_info: dict = field(default_factory=dict)  # in-play entry: market, selection, side, limit, window, probabilities
     # --- exchange-aware assessment (value.py) ---
-    decision: str = "RESEARCH"            # TRADE | NO TRADE | RESEARCH (no exchange price)
+    decision: str = "RESEARCH"            # TRADE | NO TRADE | ARM (conditional in-play entry) | RESEARCH (no exchange price)
     decision_reasons: list = field(default_factory=list)
     evidence: str = "model-synthetic"     # how the plan's return is established: exchange-priced-static | simulated-inplay | model-synthetic
     p_conservative: Optional[float] = None  # market-shrunk probability the entry selection wins

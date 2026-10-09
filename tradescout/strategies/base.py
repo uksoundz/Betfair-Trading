@@ -66,6 +66,11 @@ class OrderLeg:
     sizing: str = "stake"  # stake | liability
     note: str = ""
     p_model: float = 0.0  # model probability that this selection wins (used by the value engine)
+    # Overrides for the value engine when p_model is not an Elo/Poisson view but derived from another exchange
+    # market (tennis set betting from match odds): how much weight it gets against this market's own price,
+    # and how sure it is. None: the market family's default weight and the forecast's confidence.
+    model_weight: Optional[float] = None
+    confidence: Optional[float] = None
 
 
 @dataclass
@@ -90,6 +95,9 @@ class StrategyResult:
     warnings: list[str] = field(default_factory=list)
     orders: list[OrderLeg] = field(default_factory=list)
     rules: list[dict] = field(default_factory=list)  # in-play steps as machine rules (autotrade.rules), for armed auto-trading
+    fav: Optional[str] = None   # home | away when the strategy defines the favourite itself (from the exchange), else the forecast's
+    entry: str = "prematch"     # prematch: orders go on before the start | inplay: nothing before the start, the engine enters on a trigger
+    entry_info: dict = field(default_factory=dict)  # for in-play entries: market, selection, side, limit price, window, probability
 
     def __post_init__(self):
         # The plan "pays off" exactly when it ends in a scenario with positive profit. Deriving this

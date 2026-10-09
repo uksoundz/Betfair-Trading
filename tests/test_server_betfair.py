@@ -328,3 +328,39 @@ def test_plans_offered_for_outside_bets():
     assert plans_for("MATCH_ODDS", "C Alcaraz", "back", "tennis") == ["tn_b2l_fav"]
     assert plans_for("COMBINED_TOTAL", "Over 22.5", "back", "tennis") == ["tn_over_games"]
     assert plans_for("MATCH_ODDS", "C Alcaraz", "lay", "tennis") == []
+
+
+def test_arm_a_conditional_inplay_entry_from_a_tennis_card(srv, tmp_path):
+    server, c, ex = srv
+    server.autotrader.path = tmp_path / "autotrade.json"
+    server.autotrader.jobs = {}
+    server.autotrader.auto_start = False
+    r = c.get(f"/api/scan?date={DAY}&sport=tennis").json()
+    assert r["decisions"]["ARM"] >= 1
+    m, i = next((m, i) for m in r["matches"] for i in m["ideas"] if i["decision"] == "ARM")
+    assert i["entry"] == "inplay" and i["entry_info"]["limit"] > 1 and not i["orders"] and i["stars"] == 0 and i["armed_job"] is None
+    body = {"date": DAY, "match_id": m["id"], "strategy": i["strategy"], "sport": "tennis"}
+    server.settings.autotrade = False
+    try:
+        assert c.post("/api/autotrade/preview_idea", json=body).status_code == 403
+        server.settings.autotrade = True
+        p = c.post("/api/autotrade/preview_idea", json=body).json()
+        job = p["job"]
+        assert job["legs"][0]["side"] == "lay" and job["legs"][0]["entry_price"] == i["entry_info"]["limit"] and job["legs"][0]["market_id"]
+        assert any("or lower" in t for t in job["rules_text"]) and not job["bet_ids"]
+        assert c.post("/api/autotrade/arm_idea", json=body).status_code == 400  # needs confirm
+        n = len(ex.orders)
+        a = c.post("/api/autotrade/arm_idea", json={**body, "simulate": True, "confirm": True, "stake_money": 12}).json()
+        assert a["ok"] and a["job"]["state"] == "armed" and a["job"]["simulate"] and a["job"]["unit"] == 12 and len(ex.orders) == n  # nothing placed
+        e = next(x for x in server.journal.entries if x.id == a["entry_id"])
+        assert e.placed == "" and "in-play entry armed" in e.note
+        again = c.get(f"/api/scan?date={DAY}&sport=tennis").json()
+        assert next(x for mm in again["matches"] if mm["id"] == m["id"] for x in mm["ideas"] if x["strategy"] == i["strategy"])["armed_job"] == a["job"]["id"]
+        # once the engine is done, what it took is written into the pick so the journal settles it on the real price
+        j = server.autotrader.jobs[a["job"]["id"]]
+        j.sim_bets = [{"leg": 0, "side": "lay", "price": 2.5, "size": 8.0}]
+        server.autotrader._finish(j, "done", "test")
+        assert e.placed == "paper" and e.slip[0]["plan_price"] == 2.5 and e.slip[0]["size"] == 8.0 and e.stake_money == 12.0
+    finally:
+        server.settings.autotrade = False
+        server.autotrader.jobs = {}

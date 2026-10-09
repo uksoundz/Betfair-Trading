@@ -7,9 +7,9 @@ const STAR_HELP = 'Stars grade TRADE ideas by conservative edge x execution x ev
 const starsHtml = (n) => n ? `<span class="stars ${n <= 1 ? 'dim' : ''}" title="${n} out of 5. ${STAR_HELP}">${'★'.repeat(n)}${'☆'.repeat(5 - n)}</span>` : `<span class="stars dim" title="${STAR_HELP}">no stars</span>`;
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const PH = { entry: 'Before start', inplay: 'In play', exit: 'Get out', stop: 'Stop loss', note: 'Note' };
-const DEC = { 'TRADE': 'trade', 'NO TRADE': 'notrade', 'RESEARCH': 'research' };
+const DEC = { 'TRADE': 'trade', 'ARM': 'arm', 'NO TRADE': 'notrade', 'RESEARCH': 'research' };
 const decBadge = (d) => `<span class="badge-dec ${DEC[d] || 'research'}">${esc(d)}</span>`;
-const EVID = { 'exchange-priced-static': 'Exchange-priced, settles at result', 'simulated-inplay': 'Simulated in-play exits', 'model-synthetic': 'Model only, no market price' };
+const EVID = { 'exchange-priced-static': 'Exchange-priced, settles at result', 'simulated-inplay': 'Simulated in-play exits', 'model-synthetic': 'Model only, no market price', 'conditional-inplay': 'In-play entry at a value limit' };
 const hhmm = (iso) => iso ? iso.replace('T', ' ').slice(11, 19) : '';
 const PRICE_LABEL = { ok: 'priced', none: '', no_event: 'no Betfair match', no_markets: 'no markets yet', inplay: 'in play', suspended: 'suspended', closed: 'closed', error: 'feed error' };
 
@@ -133,7 +133,7 @@ let scanSeq = 0;
 function scanMeta(extra) {
   if (!data) return;
   const dec = data.decisions || {};
-  $('#scanmeta').textContent = `${data.fixtures} fixtures · ${data.ideas} ideas · ${dec.TRADE || 0} TRADE · ${dec['NO TRADE'] || 0} no trade · ${dec.RESEARCH || 0} research · model on ${data.model_matches.toLocaleString()} matches` + (extra || '');
+  $('#scanmeta').textContent = `${data.fixtures} fixtures · ${data.ideas} ideas · ${dec.TRADE || 0} TRADE · ${dec.ARM || 0} to arm · ${dec['NO TRADE'] || 0} no trade · ${dec.RESEARCH || 0} research · model on ${data.model_matches.toLocaleString()} matches` + (extra || '');
 }
 function scheduleRefresh() {
   clearTimeout(refreshTimer); clearInterval(countdownTimer); nextRefreshAt = null;
@@ -357,6 +357,13 @@ function placeButton(i, m) {
   return `<button class="small ${ready ? 'primary place' : ''}" data-slip="${esc(i.strategy)}" title="${esc(title)}">${label}</button>`;
 }
 
+function armIdeaButton(i) {
+  if (i.entry !== 'inplay') return '';
+  if (i.armed_job) return '<span class="evidence" title="See My picks > Auto-trading">Armed ✓</span>';
+  if (i.decision !== 'ARM') return '';
+  return `<button class="small primary place" data-armidea="${esc(i.strategy)}" title="No bet now: TradeScout watches the match and places the entry only if the trigger happens, at the value limit">Arm in-play entry…</button>`;
+}
+
 function ideaCard(i, m) {
   const settled = i.settled ? `<div class="result">Replay: this plan ${i.settled.hit >= 0.5 ? '<b class="pos">paid off</b>' : '<b class="neg">did not pay off</b>'} — ${spct(i.settled.pnl)} per unit risked${i.evidence !== 'exchange-priced-static' ? ' (modelled exits)' : ''}${i.settled.hit > 0 && i.settled.hit < 1 ? ' (event timing not in the data, so this is an expectation)' : ''}</div>` : '';
   const hist = i.historical_strike_rate != null ? `<span>History: <b>${pct(i.historical_strike_rate)}</b> strike over ${i.historical_sample} similar trades</span>` : '<span>History: <b>none</b> for this strategy and league</span>';
@@ -365,14 +372,14 @@ function ideaCard(i, m) {
     <div class="head">${decBadge(i.decision)}${starsHtml(i.stars)}<h2>${esc(i.strategy_label)}</h2><span class="evidence" title="How the return is established">${esc(EVID[i.evidence] || i.evidence)}</span>
       <button class="small ${i.tracked ? 'ghost' : ''}" data-track="${esc(i.strategy)}" ${i.tracked ? 'disabled' : ''}>${i.tracked ? 'Tracked ✓' : '+ Track'}</button>
       <button class="small" data-copy="${esc(i.strategy)}">Copy plan</button>
-      ${placeButton(i, m)}${i.placed_entry && i.automatable ? `<button class="small primary" data-autoentry="${esc(i.placed_entry)}" title="Let TradeScout follow this plan's in-play rules">Auto-trade…</button>` : ''}</div>
+      ${placeButton(i, m)}${i.placed_entry && i.automatable && i.entry !== 'inplay' ? `<button class="small primary" data-autoentry="${esc(i.placed_entry)}" title="Let TradeScout follow this plan's in-play rules">Auto-trade…</button>` : ''}${armIdeaButton(i)}</div>
     <div class="verdict">${esc(i.verdict)}</div>
     <div class="kv">
       <span>Pays off: <b>${pct(i.calibrated_hit_prob)}</b> <span title="raw model">(model ${pct(i.hit_prob)})</span></span>
       <span>Net edge (conservative): <b>${spct(i.ev_conservative)}</b> <span title="on the raw model probability">(model ${spct(i.ev_model)})</span></span>
       <span>Modelled plan return: <b>${spct(i.calibrated_roi)}</b> per unit</span>
       <span>Win <b class="pos">${spct(i.win_return)}</b> / lose <b class="neg">${spct(i.loss_return)}</b> / worst <b class="neg">${spct(i.max_loss_per_unit)}</b></span>
-      <span>Entry: <b>${price(i.market_price || i.model_price)}</b>${i.market_price ? ' (exchange)' : ' (model fair)'}</span>
+      ${i.entry === 'inplay' ? `<span>Entry limit: <b>${price(i.entry_info.limit)}</b> (in play, only on the trigger)</span>` : `<span>Entry: <b>${price(i.market_price || i.model_price)}</b>${i.market_price ? ' (exchange)' : ' (model fair)'}</span>`}
       <span>Market implies: <b>${pct(i.p_market)}</b></span>
       <span>Confidence: <b>${i.confidence.toFixed(2)}</b></span>
       <span>Execution: <b>${i.execution ? i.execution.toFixed(2) : '-'}</b></span>
@@ -491,6 +498,7 @@ async function openSlip(m, strategy, stake, src) {
 function wireIdeaButtons(m, src) {
   document.querySelectorAll('[data-autoentry]').forEach(b => b.onclick = (ev) => { ev.stopPropagation(); openArm(b.dataset.autoentry); });
   document.querySelectorAll('[data-slip]').forEach(b => b.onclick = (ev) => { ev.stopPropagation(); openSlip(m, b.dataset.slip, null, src); });
+  document.querySelectorAll('[data-armidea]').forEach(b => b.onclick = (ev) => { ev.stopPropagation(); openArmIdea(m, b.dataset.armidea, src); });
   document.querySelectorAll('[data-track]').forEach(b => b.onclick = async (ev) => {
     ev.stopPropagation(); b.disabled = true; b.textContent = 'Saving…';
     try { await post('/api/journal', { date: src.date, match_id: m.id, strategy: b.dataset.track, sport: m.sport });
@@ -524,7 +532,7 @@ function whyNoTrade(src) {
   const tally = {}, bump = (k) => tally[k] = (tally[k] || 0) + 1;
   let priced = 0, best = null;
   for (const i of ideas) {
-    if (i.decision === 'TRADE') continue;
+    if (i.decision === 'TRADE' || i.decision === 'ARM') continue;
     if (i.decision === 'RESEARCH') { const st = i.m.price_status; bump(st === 'no_event' ? 'fixture not matched to an exchange event' : st === 'no_markets' ? 'exchange has not priced the markets yet' : st === 'error' ? 'price feed error' : st === 'inplay' ? 'match already in play' : src.date < status.today ? 'past day: pre-match markets are gone' : 'no exchange price'); continue; }
     priced++;
     if (i.ev_conservative != null && (best == null || i.ev_conservative > best.ev_conservative)) best = i;
@@ -568,10 +576,10 @@ function renderPicks() {
   const mode = $('#picksMode').value, perMatch = $('#picksPerMatch').checked, sortBy = $('#picksSort').value, n = +$('#picksCount').value;
   let ideas = allIdeas(data);
   if ($('#picksBoth').checked && dataOther) ideas = ideas.concat(allIdeas(dataOther));
-  if (mode === 'trade') ideas = ideas.filter(i => i.decision === 'TRADE');
+  if (mode === 'trade') ideas = ideas.filter(i => i.decision === 'TRADE' || i.decision === 'ARM');
   if (mode === 'priced') ideas = ideas.filter(i => i.decision !== 'RESEARCH');
   const key = { score: (i) => i.score, ev: (i) => i.ev_conservative ?? -9, hit: (i) => i.calibrated_hit_prob }[sortBy];
-  const rank = { 'TRADE': 2, 'NO TRADE': 1, 'RESEARCH': 0 };
+  const rank = { 'TRADE': 3, 'ARM': 2, 'NO TRADE': 1, 'RESEARCH': 0 };
   ideas.sort((a, b) => (rank[b.decision] - rank[a.decision]) || (key(b) - key(a)));
   if (perMatch) { const seen = new Set(); ideas = ideas.filter(i => !seen.has(i.m.sport + i.m.id) && seen.add(i.m.sport + i.m.id)); }
   ideas = ideas.slice(0, n);
@@ -699,6 +707,43 @@ async function openArm(entryId, simulate, mode) {
       catch (e) { $('#armOut').innerHTML = `<div class="warn">! ${esc(e.message)}</div>`; $('#armGo').disabled = false; }
     };
   } catch (e) { card.innerHTML = `<h2>Auto-trade</h2><div class="warn">! ${esc(e.message)}</div><div class="row" style="margin-top:10px">${/switched off/.test(e.message) ? '<button id="armSettings" class="small primary">Open Settings</button>' : ''}<button id="armClose" class="ghost">Close</button></div>`; $('#armClose').onclick = () => modal.hidden = true; if ($('#armSettings')) $('#armSettings').onclick = () => { modal.hidden = true; showView('settings'); }; }
+}
+async function openArmIdea(m, strategy, src, simulate, mode, stake) {
+  const modal = $('#modal'), card = $('#modalCard'); modal.hidden = false;
+  card.innerHTML = '<div class="spinner">Reading the plan and the exchange…</div>';
+  mode = mode || 'auto';
+  const body = { date: (src || data).date, match_id: m.id, strategy, sport: m.sport || (src || data).sport, simulate: !!simulate, mode };
+  if (stake) body.stake_money = stake;
+  try {
+    const p = await post('/api/autotrade/preview_idea', body);
+    const j = p.job, info = p.entry_info || {};
+    card.innerHTML = `<h2>Arm: ${esc(j.strategy_label)}</h2><div class="meta">${esc(j.home)} v ${esc(j.away)} · ${esc(j.date)} · ${mode === 'alert' ? '<b>ALERT</b>: TradeScout tells you, you place it on Betfair' : j.simulate ? '<b>SIMULATE</b>: nothing will be sent' : '<b class="neg">LIVE</b>: the entry goes to your Betfair account if the trigger happens'}</div>
+      <div class="banner" style="margin:8px 0">No bet is placed now. TradeScout watches the live score; only if <b>${esc(info.trigger || 'the trigger')}</b> does it ${mode === 'alert' ? 'alert you to' : ''} ${esc(info.side || '')} ${esc(j.legs[0].runner_name || '')} at <b>${(info.limit || 0).toFixed(2)} or ${info.side === 'lay' ? 'lower' : 'higher'}</b>. Above that price there is no value, so no bet.</div>
+      <div class="row" style="margin:8px 0"><label><input type="radio" name="armMode" value="auto" ${mode === 'auto' ? 'checked' : ''}> <b>Act for me</b>: TradeScout places the entry</label><label><input type="radio" name="armMode" value="alert" ${mode === 'alert' ? 'checked' : ''}> <b>Alert me</b>: I place it on Betfair</label></div>
+      <h3>Steps</h3><ol style="margin:6px 0 6px 18px">${j.rules_text.map(t => `<li>${esc(t)}</li>`).join('')}</ol>
+      <label class="meta">Liability (the most it can lose) £ <input id="armUnit" type="number" min="1" step="1" value="${j.unit.toFixed(2)}" style="width:90px"></label> <button id="armUnitGo" class="small">Update</button>
+      <span class="meta">risk engine advises £${(p.stake_advised || 0).toFixed(2)}; stake at the limit £${j.legs[0].size.toFixed(2)}</span>
+      ${p.warnings.map(w => `<div class="warn">! ${esc(w)}</div>`).join('')}
+      <div class="banner" style="margin-top:10px"><b>Keep TradeScout open</b> (and the computer awake) through the first set. If the app is closed nothing is placed.</div>
+      <label style="display:block;margin-top:8px"><input type="checkbox" id="armSim" ${j.simulate ? 'checked' : ''}> Simulate only (enter on paper at the real price if it is within the limit)</label>
+      <label style="display:block;margin-top:6px"><input type="checkbox" id="armOk"> ${mode === 'alert' ? 'Alert me if the trigger happens.' : 'Place this entry for me if the trigger happens, without asking again.'}</label>
+      <div class="row" style="margin-top:12px"><button id="armGo" class="primary place" disabled>Arm</button><button id="armClose" class="ghost">Cancel</button></div><div id="armOut"></div>`;
+    const again = (o) => openArmIdea(m, strategy, src, o.sim ?? $('#armSim').checked, o.mode ?? mode, o.unit ?? +$('#armUnit').value);
+    $('#armClose').onclick = () => modal.hidden = true;
+    $('#armOk').onchange = () => { $('#armGo').disabled = !$('#armOk').checked; };
+    $('#armSim').onchange = () => again({ sim: $('#armSim').checked });
+    $('#armUnitGo').onclick = () => again({ unit: +$('#armUnit').value });
+    document.querySelectorAll('input[name=armMode]').forEach(r => r.onchange = () => again({ mode: r.value }));
+    $('#armGo').onclick = async () => {
+      $('#armGo').disabled = true;
+      try {
+        if (mode === 'alert' && window.Notification && Notification.permission === 'default') { try { await Notification.requestPermission(); } catch (e) { } }
+        const r = await post('/api/autotrade/arm_idea', { ...body, simulate: $('#armSim').checked, stake_money: +$('#armUnit').value, confirm: true });
+        modal.hidden = true; toast(r.job.mode === 'alert' ? 'Armed: you will be alerted if the trigger happens. Keep this tab open.' : r.job.simulate ? 'Armed in simulate mode.' : 'Armed: TradeScout will place the entry if the trigger happens.');
+        await loadStatus(); startAlertWatch();
+      } catch (e) { $('#armOut').innerHTML = `<div class="warn">! ${esc(e.message)}</div>`; $('#armGo').disabled = false; }
+    };
+  } catch (e) { card.innerHTML = `<h2>Arm in-play entry</h2><div class="warn">! ${esc(e.message)}</div><div class="row" style="margin-top:10px">${/switched off/.test(e.message) ? '<button id="armSettings" class="small primary">Open Settings</button>' : ''}<button id="armClose" class="ghost">Close</button></div>`; $('#armClose').onclick = () => modal.hidden = true; if ($('#armSettings')) $('#armSettings').onclick = () => { modal.hidden = true; showView('settings'); }; }
 }
 async function openAdopt() {
   const modal = $('#modal'), card = $('#modalCard'); modal.hidden = false;

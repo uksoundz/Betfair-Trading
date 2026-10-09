@@ -218,3 +218,60 @@ stand-in follows the documented API; real event spellings for leagues outside th
 the exact tennis market type codes, and account-specific login responses (two-factor, jurisdiction)
 remain to be confirmed on a live account. The diagnosis panel exists so that whatever differs is
 visible on the first day rather than silent.
+
+
+## K. Tennis edge round (9 October 2026)
+
+User request: profitable tennis trades every day, auto-traded. Findings, in order of evidence:
+
+**Negative results (kept).** Pre-match match odds: our Elo does not beat Pinnacle closing prices, and
+none of the pre-match match-odds filters tried (price band, surface, rank gap, rest days) gave an edge that robustly
+survived the 2024-25 holdout after a realistic exchange price (favourite ×1.01, underdog ×1.04 vs
+Pinnacle, measured on 564 matches with both prices) and 5% commission. The four original tennis
+plans all lose at model prices (section F). A "tired favourite against a rested underdog" pattern
+looked positive on the development years but is not confirmed and is not shipped.
+
+**What does hold up.** Given the market's match probability, the independent-points model gets the
+structure of a match wrong in a stable way. Logistic corrections P = sigmoid(a + b·logit(P_model))
+fitted on 2021-23 ATP closing prices (tennis-data.co.uk, Pinnacle) beat the plain model on 2024-25 for
+straight sets (both players, both formats), first set, and comeback after a lost first set (best of 3
+only; best of 5 did not validate and is not used). The first-set margin carries extra information: a
+favourite beaten 6-3 or wider came back 27.4% of the time against 34.9% from independent points
+(n=566 holdout), one beaten narrowly 33.7% against 35.9%.
+
+**Shipped.**
+
+| Plan | Entry | Decision | Settles |
+|---|---|---|---|
+| Set betting value against match odds (`tn_sets_value`) | pre-match, value-gated against the Set Betting quote (model weight 0.6, confidence 0.85 because the probability is market-derived) | TRADE / NO TRADE | exact, at the result |
+| Lay favourite after a clear first-set loss (`tn_lay_fav_lost_set1`) | in play, only on a 6-3-or-wider set-1 loss, best of 3, favourite 50-78%; limit L* = 1 + (1−q)(1−c)/(q + 0.03), q the validated comeback rate | ARM (new) | from the matched price and size the engine records |
+
+The engine gained an `enter` action: a limit order at the plan's value limit, sized from the plan
+liability, resting for 120 s (not the 15 s used for hedges), counted against the daily cap, honest in
+simulate mode (it 'matches' only at a price within the limit) and turned into a suggestion in alert
+mode. Plans with an in-play entry are exempt from the "never matched before the start" expiry, and a
+later no-entry rule cannot end the job while the entry order is resting. When the job ends, what it
+matched is written into the journal so settlement uses the real price; an armed plan that never
+entered settles as void. `tn_straight_sets` (Elo-based) is now off by default: the set-betting plan
+covers the same market anchored to the exchange.
+
+**Evidence class: scenario, not exchange evidence.** No historical Betfair set-betting or in-play
+prices were available. If the exchange priced like the plain independent-points model, the in-play lay
+would have returned +9.4% per unit of liability on the holdout triggers (95% CI +3.7%..+15.1%), +6.2%
+if the exchange already shades the comeback 5% lower, +2.2% at 10% lower (correction fitted on dev
+only, 2% spread charged, 5% commission). Backing straight sets at independent-points prices would
+have returned about +12% (best of 3), but a real Set Betting book is unlikely to be priced that
+naively; the value gate decides per match. Frequency: about 280 qualifying triggers a year on the ATP
+tour (roughly one a day in season). WTA and Challenger matches are not covered: the corrections were
+not fitted on them.
+
+Tests: 270 pass (new: market model consistency, value-limit maths, both strategies, ARM scoring,
+journal settlement, engine entry matched / resting-then-cancelled / skipped / simulate / alert against
+the stand-in exchange, the arm route end to end). Chromium check: tennis day shows "5 to arm", the
+ARM card, the arm window and arming in simulate mode, no script errors.
+
+Sources: tennis-data.co.uk yearly ATP files as mirrored in
+[gmalbert/tennis-predictions](https://github.com/gmalbert/tennis-predictions); background on set and
+serve modelling from [Leoooo22/tennis-match-prediction](https://github.com/Leoooo22/tennis-match-prediction),
+[sportsR atp_matches_2019](https://rdrr.io/cran/sportsR/man/atp_matches_2019.html) and the
+[welo package](https://cran.r-universe.dev/welo/doc/manual.html).

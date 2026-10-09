@@ -66,6 +66,9 @@ def idea_verdict(hit: float, roi: float, edge: float | None, score: float, decis
     elif decision == "NO TRADE":
         head = ("NO TRADE: no proven advantage at the current exchange price" + f" (conservative edge {ev_cons:+.1%})." if ev_cons is not None
                 else "NO TRADE: the exchange has no reliable price for this yet (empty market or the match has started), so no edge can be claimed.")
+    elif decision == "ARM":
+        return ("ARM: no bet before the start. Arm it and TradeScout enters in play only if the trigger happens, at a limit price that keeps "
+                "a margin over the validated probability. Whether the exchange offers that price is measured by doing it.")
     else:
         head = "RESEARCH ONLY: no exchange price, so no advantage can be claimed."
     tail = f" The plan pays off about {hit:.0%} of the time; modelled return {roi:+.1%} per unit risked."
