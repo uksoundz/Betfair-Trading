@@ -131,6 +131,13 @@ def player_part(runner_name: str) -> str:
     return re.sub(r"\d\s*-\s*\d", " ", runner_name).strip(" -:")
 
 
+def total_label(runner_name: str, handicap: float) -> str:
+    """'Over' at handicap 22.5 -> 'Over 22.5'; names that already carry the line are left alone."""
+    if re.search(r"\d", runner_name) or not handicap:
+        return runner_name
+    return f"{runner_name} {abs(handicap):g}"
+
+
 def games_key(runner_name: str) -> str:
     """'Over 22.5 Games' / 'Over 22.5' -> 'Over 22.5' (the strategies' selection key)."""
     m = re.match(r"\s*(over|under)\s+(\d+(?:\.\d+)?)", runner_name, re.I)
@@ -225,8 +232,8 @@ class BetfairTennis:
         for c in cats:
             low = c.get("marketName", "").lower()
             t = (c.get("description") or {}).get("marketType")
-            if "total games" in low or ("over/under" in low and "games" in low):
-                t = "TOTAL_GAMES"
+            if t == "COMBINED_TOTAL" or "total games" in low or ("over/under" in low and "games" in low):
+                t = "TOTAL_GAMES"  # Betfair's tennis total-games market is COMBINED_TOTAL: Over/Under runners at many lines
             elif t not in TENNIS_MARKETS:
                 t = next((v for n, v in MARKET_NAME_TYPES.items() if n in low), t)
             c["_type"] = t
@@ -264,11 +271,13 @@ class BetfairTennis:
                     mp.delayed = bool(book.get("isMarketDataDelayed"))
             if status != "OPEN" or inplay:
                 continue  # suspended, closed or in play: not a pre-match price
-            runners = {r["selectionId"]: r for r in cat["runners"]}
+            # Asian-style markets reuse one selection id at many lines: a runner is (selectionId, handicap)
+            runners = {(r["selectionId"], float(r.get("handicap") or 0.0)): r for r in cat["runners"]}
             for r in book.get("runners", []):
                 if r.get("status") not in (None, "ACTIVE"):
                     continue
-                meta = runners.get(r["selectionId"], {})
+                hc = float(r.get("handicap") or 0.0)
+                meta = runners.get((r["selectionId"], hc)) or runners.get((r["selectionId"], 0.0), {})
                 name = meta.get("runnerName", "")
                 ex = r.get("ex", {})
                 back_l = [(x["price"], x["size"]) for x in (ex.get("availableToBack") or []) if x.get("price")]
@@ -291,7 +300,7 @@ class BetfairTennis:
                     if back_l:
                         mp.correct_scores[score] = back_l[0][0]
                 elif mtype == "TOTAL_GAMES":
-                    mp.quotes[f"TOTAL_GAMES:{games_key(name)}"] = q
+                    mp.quotes[f"TOTAL_GAMES:{games_key(total_label(name, hc))}"] = q
                 elif mtype == "SET_1_WINNER":
                     skey = "home" if self.matcher.same(name, fixture.home) else "away"
                     mp.quotes[f"SET_1_WINNER:{skey}"] = q
@@ -389,17 +398,18 @@ class BetfairTennis:
                     ok = bool(m) and (f"{m.group(1)}-{m.group(2)}" == selection and not is_away
                                       or f"{m.group(2)}-{m.group(1)}" == selection and is_away)
                 elif market == "TOTAL_GAMES":
-                    ok = games_key(name).lower() == games_key(selection).lower()
+                    ok = games_key(total_label(name, float(r.get("handicap") or 0.0))).lower() == games_key(selection).lower()
                 else:
                     ok = name.lower() == selection.lower()
                 if ok:
+                    hc = float(r.get("handicap") or 0.0)
                     book = self.bf.books([cat["marketId"]]).get(cat["marketId"], {})
                     bb = bl = None
                     for br in book.get("runners", []):
-                        if br["selectionId"] == r["selectionId"]:
+                        if br["selectionId"] == r["selectionId"] and float(br.get("handicap") or 0.0) == hc:
                             bb = (br.get("ex", {}).get("availableToBack") or [{}])[0].get("price")
                             bl = (br.get("ex", {}).get("availableToLay") or [{}])[0].get("price")
-                    return {"market_id": cat["marketId"], "selection_id": r["selectionId"], "best_back": bb, "best_lay": bl,
+                    return {"market_id": cat["marketId"], "selection_id": r["selectionId"], "handicap": hc, "best_back": bb, "best_lay": bl,
                             "status": "INPLAY" if book.get("inplay") else (book.get("status") or "OPEN"), "runner_name": name,
                             "event_name": fixture.label, "delayed": book.get("isMarketDataDelayed")}
         return None

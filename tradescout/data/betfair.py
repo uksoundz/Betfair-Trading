@@ -701,7 +701,8 @@ class BetfairPrices:
                         if br["selectionId"] == r["selectionId"]:
                             best_back = (br.get("ex", {}).get("availableToBack") or [{}])[0].get("price")
                             best_lay = (br.get("ex", {}).get("availableToLay") or [{}])[0].get("price")
-                    return {"market_id": cat["marketId"], "selection_id": r["selectionId"], "best_back": best_back, "best_lay": best_lay,
+                    return {"market_id": cat["marketId"], "selection_id": r["selectionId"], "handicap": float(r.get("handicap") or 0.0),
+                            "best_back": best_back, "best_lay": best_lay,
                             "status": "INPLAY" if book.get("inplay") else (book.get("status") or "OPEN"), "runner_name": r.get("runnerName"),
                             "event_name": m.event_name, "delayed": book.get("isMarketDataDelayed")}
         return None
@@ -714,7 +715,7 @@ class BetfairPrices:
         exchange reject an accidental resubmission of the same slip within its de-duplication window."""
         payload = {
             "marketId": market_id,
-            "instructions": [{"selectionId": int(i["selectionId"]), "handicap": 0, "side": i["side"].upper(), "orderType": "LIMIT",
+            "instructions": [{"selectionId": int(i["selectionId"]), "handicap": float(i.get("handicap") or 0.0), "side": i["side"].upper(), "orderType": "LIMIT",
                               "limitOrder": {"size": round(float(i["size"]), 2), "price": float(i["price"]), "persistenceType": "LAPSE"},
                               **({"customerOrderRef": str(i["customerOrderRef"])[:32]} if i.get("customerOrderRef") else {})}
                              for i in instructions],

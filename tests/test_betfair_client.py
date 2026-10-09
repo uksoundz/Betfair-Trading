@@ -320,3 +320,29 @@ def test_a_failing_batch_only_affects_its_own_matches(client, day_fixtures, fake
         client.invalidate()
     per, rep = client.prices_for_day(day_fixtures[:4])
     assert rep.priced == 4 and rep.error is None
+
+
+def test_tennis_total_games_lines_are_priced_and_placed_with_their_handicap(fake):
+    from tradescout.betting import build_slip, place_slip
+    from tradescout.data.betfair_tennis import BetfairTennis, total_label
+    from tradescout.tennis.data import TennisProvider
+    from tradescout.tennis.scout import TennisScout
+    url, ex = fake
+    assert total_label("Over", 22.5) == "Over 22.5" and total_label("Over 22.5 Games", 22.5) == "Over 22.5 Games"
+    client = BetfairPrices("testkey", None, "user", "secret")
+    tp = TennisProvider()
+    bt = BetfairTennis(client, tp)
+    fx = bt.fixtures(DAY)
+    per, _ = bt.prices_for_day(fx)
+    keys = [k for k in per[fx[0].label].quotes if k.startswith("TOTAL_GAMES:")]
+    assert len(keys) >= 10 and "TOTAL_GAMES:Over 22.5" in keys and "TOTAL_GAMES:Under 22.5" in keys
+    full = bt.resolve_full(fx[0], "TOTAL_GAMES", "Over 22.5")
+    assert full and full["handicap"] == 22.5 and full["best_back"]
+    scan = TennisScout(tp, bt, bt).scan(DAY)
+    games = [i for i in scan.ideas if i.strategy == "tn_over_games"]
+    assert games and all(i.decision != "RESEARCH" for i in games), [i.decision_reasons for i in games]
+    slip = build_slip(games[0], 10.0, bt)
+    assert slip.lines[0].market_id and slip.lines[0].handicap > 0
+    ex.control({"reset_orders": True})
+    res = place_slip(slip, bt, "ts-games", 500.0, 0.0)
+    assert res.ok and ex.orders[-1]["handicap"] == slip.lines[0].handicap

@@ -173,15 +173,18 @@ def assess(p_model: float, side: str, quote: Optional[Quote], limit_price: Optio
     # the mid-point means nothing, hold the decision back until closer to the start.
     liquidity_ok = (quote.total_matched or 0) >= min_total_matched
     spread_wide = spread is not None and spread > max_spread
-    spread_unreliable = spread is not None and spread > max(3 * max_spread, 0.10)
+    one_sided = not quote.back or not quote.lay  # no midpoint: a lone offer says nothing about the probability
+    spread_unreliable = one_sided or (spread is not None and spread > max(3 * max_spread, 0.10))
     execution = (fill.fraction if fill.fraction > 0 else 0.3) * (0.7 if spread_wide else 1.0) * (0.85 if not liquidity_ok else 1.0)
     decision = "TRADE"
     if ev_cons < min_edge:
         decision = "NO TRADE"
-        reasons.append(f"Conservative net edge {ev_cons:+.1%} per unit risked is below the {min_edge:.0%} threshold after {commission:.0%} commission.")
+        reasons.append(f"Conservative net edge {ev_cons:+.1%} per unit risked is below the {min_edge:.1%} threshold after {commission:.0%} commission.")
     if spread_unreliable:
         decision = "NO TRADE"
-        reasons.append(f"No reliable exchange price yet: back/lay spread {spread:.0%} (the market is empty), so no edge can be claimed either way; check again nearer kick-off.")
+        reasons.append(("No reliable exchange price yet: offers on one side only (the market is empty)" if one_sided else
+                        f"No reliable exchange price yet: back/lay spread {spread:.0%} (the market is empty)") +
+                       ", so no edge can be claimed either way; check again nearer the start.")
     elif spread_wide:
         reasons.append(f"Spread {spread:.1%} is wide right now (above {max_spread:.0%}): the market's own probability is uncertain, so the edge estimate is rough.")
     if not liquidity_ok:

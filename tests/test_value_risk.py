@@ -46,6 +46,10 @@ def test_assess_decisions():
     quiet = Quote(back=[(2.40, 500.0)], lay=[(2.44, 500.0)], total_matched=300)
     d3 = assess(0.55, "back", quiet, 2.40, 20.0, "MATCH_ODDS", 1.0, 0.05, 0.02, 0.04)
     assert d3.decision == "TRADE" and any("thin now" in r for r in d3.reasons) and d3.execution < a.execution
+    # an offer on one side only has no midpoint: no edge can be claimed
+    lonely = Quote(back=[(1.01, 50.0)], lay=[], total_matched=0)
+    d5 = assess(0.6, "back", lonely, 1.01, 20.0, "SET_BETTING", 1.0, 0.05, 0.001, 0.04)
+    assert d5.decision == "NO TRADE" and not d5.price_reliable and any("one side only" in r for r in d5.reasons)
     # trusting the model more raises the conservative edge
     d4 = assess(0.48, "back", q, 2.40, 20.0, "MATCH_ODDS", 1.0, 0.05, 0.02, 0.04, model_weight_scale=2.0)
     assert d4.ev_conservative > b.ev_conservative

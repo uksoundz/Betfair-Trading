@@ -261,9 +261,21 @@ class FakeExchange:
             add_tmarket("MATCH_ODDS", "Match Odds", [(pa, p_a), (pb, 1 - p_a)], round(rnd.uniform(50_000, 600_000), 2))
             add_tmarket("SET_BETTING", "Set Betting", [(f"{sa} 2-0", p_sets.get("2-0", 0.3)), (f"{sa} 2-1", p_sets.get("2-1", 0.2)),
                                                        (f"{sb} 2-0", p_sets.get("0-2", 0.3)), (f"{sb} 2-1", p_sets.get("1-2", 0.2))], round(rnd.uniform(2_000, 40_000), 2))
-            line = min(p_over, key=lambda L: abs(p_over[L] - 0.5))
-            add_tmarket("TOTAL_GAMES", f"Over/Under {line:g} Games", [(f"Under {line:g} Games", 1 - p_over[line]), (f"Over {line:g} Games", p_over[line])],
-                        round(rnd.uniform(1_000, 20_000), 2))
+            # Betfair lists tennis total games as COMBINED_TOTAL: one "Under" and one "Over" selection, each at many lines (handicap)
+            mid_t = f"1.{self._next_id}"
+            self._next_id += 1
+            u_sel, o_sel = 3_000_000 + self._next_id * 10, 3_000_000 + self._next_id * 10 + 1
+            rs_t, book_t = [], []
+            for n, ln in enumerate(sorted(p_over)):
+                for sel, rname, pr in ((u_sel, "Under", 1 - p_over[ln]), (o_sel, "Over", p_over[ln])):
+                    rs_t.append({"selectionId": sel, "runnerName": rname, "handicap": float(ln), "sortPriority": len(rs_t) + 1})
+                    bb, ll = fair(pr)
+                    book_t.append({"selectionId": sel, "handicap": float(ln), "status": "ACTIVE", "lastPriceTraded": round(bb, 2), "totalMatched": 100.0,
+                                   "ex": {"availableToBack": _ladder(bb, "back", rnd), "availableToLay": _ladder(ll, "lay", rnd), "tradedVolume": []}})
+            markets[mid_t] = {"marketId": mid_t, "marketName": "Total Games", "marketStartTime": ko.strftime("%Y-%m-%dT%H:%M:%S.000Z"), "totalMatched": 5000.0,
+                              "description": {"marketType": "COMBINED_TOTAL", "bettingType": "ASIAN_HANDICAP_DOUBLE_LINE", "persistenceEnabled": True, "bspMarket": False,
+                                              "turnInPlayEnabled": True, "marketTime": ko.strftime("%Y-%m-%dT%H:%M:%S.000Z"), "marketBaseRate": 5.0},
+                              "runners": rs_t, "event": dict(events[-1]["event"]), "competition": comp, "_book": book_t, "_event": ev_id}
             add_tmarket("SET_1_WINNER", "Set 1 Winner", [(pa, p_set1), (pb, 1 - p_set1)], round(rnd.uniform(1_000, 30_000), 2))
         return {"events": events, "markets": markets}
 
@@ -428,7 +440,8 @@ class FakeExchange:
             lo = ins.get("limitOrder") or {}
             size, price = float(lo.get("size", 0)), float(lo.get("price", 0))
             sel = ins.get("selectionId")
-            if m is None or not any(r["selectionId"] == sel for r in m["runners"]):
+            hc = float(ins.get("handicap") or 0.0)
+            if m is None or not any(r["selectionId"] == sel and float(r.get("handicap") or 0.0) == hc for r in m["runners"]):
                 reports.append({"status": "FAILURE", "errorCode": "INVALID_MARKET_ID" if m is None else "INVALID_RUNNER", "instruction": ins})
                 ok_all = False
                 continue
@@ -437,11 +450,11 @@ class FakeExchange:
                 ok_all = False
                 continue
             # matched if the limit is at or worse than the best available price
-            br = next(b for b in m["_book"] if b["selectionId"] == sel)
+            br = next(b for b in m["_book"] if b["selectionId"] == sel and float(b.get("handicap") or 0.0) == hc)
             best = br["ex"]["availableToBack"][0]["price"] if ins["side"] == "BACK" else br["ex"]["availableToLay"][0]["price"]
             matched = (price <= best) if ins["side"] == "BACK" else (price >= best)
             bet_id = str(300_000_000 + len(self.orders))
-            order = {"betId": bet_id, "marketId": mid, "selectionId": sel, "handicap": 0.0, "priceSize": {"price": price, "size": size}, "bspLiability": 0.0,
+            order = {"betId": bet_id, "marketId": mid, "selectionId": sel, "handicap": hc, "priceSize": {"price": price, "size": size}, "bspLiability": 0.0,
                      "side": ins["side"], "status": "EXECUTION_COMPLETE" if matched else "EXECUTABLE", "persistenceType": lo.get("persistenceType", "LAPSE"),
                      "orderType": "LIMIT", "placedDate": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
                      "averagePriceMatched": best if matched else 0.0, "sizeMatched": size if matched else 0.0, "sizeRemaining": 0.0 if matched else size,

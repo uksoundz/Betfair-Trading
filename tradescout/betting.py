@@ -93,6 +93,7 @@ class SlipLine:
     price_ok: Optional[bool] = None     # live price at least as good as the plan price
     market_id: Optional[str] = None
     selection_id: Optional[int] = None
+    handicap: float = 0.0               # the line, for markets that list one runner at many lines (tennis total games)
     betfair_url: Optional[str] = None  # opens this market on the Betfair website
     below_minimum: bool = False
     blocked: bool = False              # market in play / suspended / closed: cannot be sent as a pre-match order
@@ -170,6 +171,8 @@ def build_slip(idea: TradeIdea, stake_money: float, bf=None, min_stake: float = 
                 line.warnings.append(f"Price lookup failed: {exc}")
             if found:
                 line.market_id, line.selection_id, best_back, best_lay = found
+                if full:
+                    line.handicap = float(full.get("handicap") or 0.0)
                 if full and full.get("status") not in (None, "OPEN"):
                     line.blocked = True
                     line.market_status = full["status"]
@@ -305,7 +308,8 @@ def place_slip(slip: BetSlip, bf, customer_ref: str, daily_cap: float, committed
                 placed.append(PlacedLine(l.market_label, l.runner_name, l.side, l.plan_price, l.size, "SKIPPED", error="not sent: an earlier leg of the plan was rejected"))
             continue
         ref = f"{customer_ref}-{n}"[:32]
-        instructions = [{"selectionId": l.selection_id, "side": l.side, "price": l.plan_price, "size": l.size, "customerOrderRef": order_ref(customer_ref, l)} for l in lines]
+        instructions = [{"selectionId": l.selection_id, "handicap": l.handicap, "side": l.side, "price": l.plan_price, "size": l.size,
+                         "customerOrderRef": order_ref(customer_ref, l)} for l in lines]
         try:
             report = bf.place_orders(market_id, instructions, ref)
         except Exception as exc:

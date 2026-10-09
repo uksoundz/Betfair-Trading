@@ -123,7 +123,7 @@ class Scorer:
             if ev_cons is not None and strategy.inplay and abs(plan_adjust) > 0.002:
                 reasons.append(f"In-play plan structure {'costs' if plan_adjust < 0 else 'adds'} {abs(plan_adjust):.1%} per unit versus holding the entry bet (modelled exits, friction, commission).")
             if decision == "NO TRADE" and ev_cons is not None and ev_cons < settings.min_edge and not any("below" in x for x in reasons):
-                reasons.append(f"Combined conservative net edge {ev_cons:+.1%} is below the {settings.min_edge:.0%} threshold.")
+                reasons.append(f"Combined conservative net edge {ev_cons:+.1%} is below the {settings.min_edge:.1%} threshold.")
             evidence = "exchange-priced-static" if strategy.key in STATIC_STRATEGIES else "simulated-inplay"
         else:
             ev_cons = ev_model = p_cons = p_mkt = None
