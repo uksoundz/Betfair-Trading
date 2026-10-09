@@ -214,6 +214,16 @@ This works on the Delayed key: the trigger is the live scoreboard and the limit 
 so Betfair matches at the real price if it is within the limit. Keep TradeScout open through the first
 set. Start with simulate or small stakes: how often Betfair offers the limit is not yet known.
 
+Women's matches (WTA) are included for this plan and the set-betting plan. For women the plan also lays the
+favourite after a narrow first-set loss (7-5, 6-4 or a tiebreak), at a lower limit, because that held up in the
+women's data too.
+
+**Break-point scalp (practice only).** Turn on "Break-point scalp" under Settings > Strategies to see it on
+tennis cards with a **Practise in play…** button. At 15-40 or 0-40 it backs the receiver and greens up when the
+game is broken, held or reaches deuce. The historical data shows no edge after costs, so it can only be armed in
+**Simulate** or **Alert me** mode. It needs the live point score from Betfair's scoreboard; on a Delayed key use
+Alert me and Cash Out yourself.
+
 **Set betting value against match odds** is an ordinary pre-match plan (TRADE or NO TRADE): place it
 from the slip like any other and it settles at the result.
 

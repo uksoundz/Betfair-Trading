@@ -108,8 +108,8 @@ class Scorer:
             ev_cons = ev_model = None
             p_cons, p_mkt = info.get("p_selection"), None  # no exchange price for the in-play moment exists yet
             execution = 0.0
-            decision = "ARM" if prices is not None and prices.available else "RESEARCH"
-            reasons = ([info.get("summary", "Conditional in-play entry.")] if decision == "ARM" else
+            decision = ("ARM" if info.get("proven", True) else "NO TRADE") if prices is not None and prices.available else "RESEARCH"
+            reasons = ([info.get("summary", "Conditional in-play entry.")] if decision != "RESEARCH" else
                        ["No exchange match-odds price, so the in-play limit cannot be anchored to the market. NO TRADE until Betfair prices are in."])
             evidence = "conditional-inplay"
         elif legs and len(priced) == len(legs):
@@ -149,7 +149,9 @@ class Scorer:
             evidence = "model-synthetic"
 
         # ---- rank score (transparent): 10 points per 1% conservative edge x execution x evidence
-        if decision == "ARM":
+        if decision == "NO TRADE" and r.entry == "inplay":
+            score = 5.0
+        elif decision == "ARM":
             # ordering only: how often the trigger happens; capped below the TRADE band (no edge is proven yet)
             score = float(np.clip(100.0 * r.entry_info.get("p_trigger", 0.0) + 15.0, 0, 39))
         elif decision in ("TRADE", "NO TRADE"):

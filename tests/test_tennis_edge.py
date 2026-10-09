@@ -142,4 +142,16 @@ def test_wta_uses_its_own_corrections_and_trades_the_narrow_loss_too():
 
 def test_women_get_only_the_market_anchored_plans():
     from tradescout.tennis.strategies import TENNIS_STRATEGIES
-    assert {s.key for s in TENNIS_STRATEGIES if "wta" in s.tours} == {"tn_sets_value", "tn_lay_fav_lost_set1"}
+    assert {s.key for s in TENNIS_STRATEGIES if "wta" in s.tours} == {"tn_sets_value", "tn_lay_fav_lost_set1", "tn_bp_scalp"}
+
+
+def test_break_point_scalp_is_offered_only_as_unproven_practice():
+    from tradescout.tennis.strategies import BreakPointScalp
+    s, fc = BreakPointScalp(), _fc()
+    assert not s.enabled_default and s.evaluate(fc, MarketPrices()) is None
+    prices = _prices(1.5, 1.52, 2.9, 2.96)
+    r = s.evaluate(fc, prices)
+    assert r.entry == "inplay" and r.entry_info["legs"] == ["home", "away"] and r.entry_info["proven"] is False
+    assert r.rules[0]["do"]["a"] == "scalp" and r.rules[0]["when"]["t"] == "break_point_score"
+    idea = Scorer(Calibration()).score(fc.fixture, fc, s, r, prices=prices, sport="tennis")
+    assert idea.decision == "NO TRADE" and idea.stake_money == 0 and idea.stars == 0 and "No proven edge" in idea.decision_reasons[0]

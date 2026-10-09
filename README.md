@@ -1,6 +1,6 @@
 # TradeScout
 
-Exchange trading research for football and ATP tennis. It pulls the day's fixtures, forecasts every
+Exchange trading research for football and tennis (ATP, plus WTA for the market-anchored plans). It pulls the day's fixtures, forecasts every
 market from the numbers, checks each strategy against the Betfair price and depth actually on offer,
 and ranks what is left. Most ideas end as **NO TRADE**. That is the point.
 
@@ -135,7 +135,27 @@ scores (fitted 2021-23, kept only where it beat the plain model on 2024-25;
   runs to the result. Works on the free Delayed key (the trigger is the live score, the limit is the
   value test).
 
-Neither is proven on Betfair: no historical exchange set-betting or in-play prices were available. If
+**Women's tour (WTA).** The same corrections fitted on tennis-data.co.uk WTA closing prices (2010-15, held
+up on 2016-19, every target validated) price women's matches; only these two market-anchored plans run on
+them (there are no women's ratings in the app). The effect is stronger: a favourite beaten 6-3 or wider came
+back 26.5% of the time against 35.3% from independent points, and a narrowly beaten one 31.2% against 36.3%,
+so women's matches also trade the narrow-loss branch.
+
+**TradeShark-style in-play trades, tested.** On Grand Slam point-by-point data (2011-24, 8,575 matches joined
+to Pinnacle closing odds; `tradescout/eval/tennis_pbp_build.py` and `tennis_pbp_trades.py`), against an exchange
+pricing every point like the independent-points model:
+
+| Trade | 2017-24 result |
+|---|---|
+| Back the receiver at 15-40 / 0-40, green on the break, hedge at deuce | receivers break slightly more than the model says (men 61% v 59%), but the scalp is break-even with no spread and loses about 2% per trade with a 1% spread; 30-40 is no worse |
+| Back a favourite broken early in set 1 ("slow starter") | they came back less often than the model says (men 55% v 64%), so backing them lost |
+| Lay the first-set winner after they break in set 2 ("lay the leader") | leaders win slightly more than the model says; laying them lost in every split |
+
+Momentum persists; it does not revert. That is the same direction as the lay-after-set-1 edge above. The
+break-point scalp is in the app (`tn_bp_scalp`, off by default) for simulate and alert use only; the other two
+are not built as auto-trades because the data says they lose.
+
+Neither market-anchored plan is proven on Betfair: no historical exchange set-betting or in-play prices were available. If
 the exchange priced like the plain independent-points model, the in-play lay would have returned
 +9.4% per unit of liability on the 566 holdout triggers (95% CI +3.7%..+15.1%), and +2.2% if the
 exchange already shades the comeback 10% lower. Expect about one trigger a day across the ATP tour.

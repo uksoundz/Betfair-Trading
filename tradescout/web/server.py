@@ -971,8 +971,12 @@ def _job_for_idea(body: ArmIdeaIn) -> tuple:
     idea, _, sport = _rebuild_idea(body)
     if idea.entry != "inplay":
         raise HTTPException(400, "This plan starts with a pre-match bet: place it through the bet slip, then use Auto-trade on it.")
-    if idea.decision != "ARM":
+    unproven = idea.decision == "NO TRADE" and idea.entry_info.get("proven") is False
+    if idea.decision != "ARM" and not unproven:
         raise HTTPException(409, " ".join(idea.decision_reasons[:2]) or "This plan cannot be armed right now.")
+    if unproven and not body.simulate and body.mode != "alert":
+        raise HTTPException(409, "This plan has no proven edge, so TradeScout will not place it with real money for you. Arm it in Simulate or "
+                                 "Alert me mode to measure it on live prices.")
     client = _price_client(sport)
     if client is None or rt.betfair is None:
         raise HTTPException(400, "Betfair is not set up: add the application key, username and password in Settings.")

@@ -364,3 +364,23 @@ def test_arm_a_conditional_inplay_entry_from_a_tennis_card(srv, tmp_path):
     finally:
         server.settings.autotrade = False
         server.autotrader.jobs = {}
+
+
+def test_unproven_inplay_plan_arms_only_in_simulate_or_alert(srv, tmp_path):
+    server, c, ex = srv
+    server.autotrader.path = tmp_path / "autotrade.json"
+    server.autotrader.jobs = {}
+    server.autotrader.auto_start = False
+    r = c.get(f"/api/scan?date={DAY}&sport=tennis").json()
+    m = next(m for m in r["matches"] if m.get("price_status") == "ok")
+    body = {"date": DAY, "match_id": m["id"], "strategy": "tn_bp_scalp", "sport": "tennis"}
+    server.settings.autotrade = True
+    try:
+        assert c.post("/api/autotrade/preview_idea", json=body).status_code == 409  # act-for-me with real money: refused
+        p = c.post("/api/autotrade/preview_idea", json={**body, "simulate": True}).json()
+        assert len(p["job"]["legs"]) == 2 and {l["selection"] for l in p["job"]["legs"]} == {"home", "away"}
+        a = c.post("/api/autotrade/arm_idea", json={**body, "mode": "alert", "confirm": True}).json()
+        assert a["ok"] and a["job"]["mode"] == "alert"
+    finally:
+        server.settings.autotrade = False
+        server.autotrader.jobs = {}

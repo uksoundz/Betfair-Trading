@@ -275,3 +275,46 @@ Sources: tennis-data.co.uk yearly ATP files as mirrored in
 serve modelling from [Leoooo22/tennis-match-prediction](https://github.com/Leoooo22/tennis-match-prediction),
 [sportsR atp_matches_2019](https://rdrr.io/cran/sportsR/man/atp_matches_2019.html) and the
 [welo package](https://cran.r-universe.dev/welo/doc/manual.html).
+
+
+## L. Women's tour and TradeShark-style in-play trades (9 October 2026)
+
+**WTA.** tennis-data.co.uk is not reachable from this build environment, so the WTA files were taken from a public
+mirror ([0xsimulacra/MLT](https://github.com/0xsimulacra/MLT), WTA 2007-19 with Pinnacle closing odds and set scores).
+Corrections fitted on 2010-15 and scored on 2016-19, with women's serve-point averages in the point model; all
+seven targets validated (for example comeback after a 6-3-or-wider set-1 loss: plain model 35.3%, actual 26.5%,
+log-loss 0.5748 → 0.5595; after a narrow loss 36.3% → 31.2%, 0.6067 → 0.6016). Scenario for the in-play lay
+(favourite 50-78%, 2% spread, 5% commission, correction fitted on dev only): +10.1% per unit of liability on 1,578
+clear-loss triggers if the exchange prices like the plain model, +6.1% if it already shades the comeback 5% lower,
+−0.9% at 10% lower; narrow losses +4.9% / +3.3% / −0.8%. The narrow-loss branch is traded only where its
+correction improved holdout log-loss by at least 0.002 (WTA yes, ATP no). Betfair WTA singles competitions are now
+scanned; women's matches get only the plans priced from the exchange's own match odds. The women's data ends in
+2019: the holdout is older than the men's.
+
+**Point-level trades.** Grand Slam point-by-point data 2011-24 (Sackmann, via the
+[tennis-sackmann-archive](https://huggingface.co/datasets/Aneeshers/tennis-sackmann-archive) mirror), 5,242 men's
+and 3,333 women's matches joined to Pinnacle closing odds (join checked: favourites won at their implied rate in
+every year). Each trade was valued against an exchange that prices every point with the independent-points model
+from the pre-match price; dev 2011-16, holdout 2017-24 (women 2017-19).
+
+| Trade (TradeShark description) | Men 2017-24 | Women 2017-19 |
+|---|---|---|
+| Back the receiver at 15-40, green at the break, hedge at deuce | breaks 61.1% v 58.9% model; −2.0% per trade (1% spread), −0.1% with no spread | 68.2% v 67.8%; −2.5% |
+| same at 0-40 | 75.8% v 73.8%; −1.7% | −2.1% |
+| same at 30-40 (the method says avoid) | −1.9% | −2.7% |
+| Back a favourite broken early in set 1 and hold | won 54.8% v 63.7% model; −18% per unit | 52.2% v 62.9%; −22% |
+| same, green when they break back or at the set end | −1.7% | −3.3% |
+| Lay the set-1 winner after they break in set 2, hold | won 92.6% v 92.1%; loses | 93.5% v 91.5%; loses |
+| same, back back when broken back or at the set end | loses in every split | loses |
+
+Dev years agree in sign throughout, except the slow-starter hold, which was flat on 2011-16 and strongly negative
+on 2017-24. The break-point scalp is shipped off by default, with the evidence in its rationale, and can only be
+armed in simulate or alert mode (a NO TRADE in-play plan cannot place real money). It also cannot act for the user
+on a Delayed key: a 5% scalp is smaller than the error in a price up to three minutes old. Slow starter and lay the
+leader are not built as auto-trades. Caveats: Grand Slams only (best of five for men), independent-points pricing
+stands in for the real in-play market, and the live point score from Betfair's scoreboard (points and server)
+follows the format the stand-in exchange serves and still has to be confirmed on a live match.
+
+Engine additions: `break_point_score` condition, repeating `scalp` action (enter on the trigger in a game not yet
+traded, green when the game ends or reaches deuce, at most N cycles, each counted against the daily cap), points and
+server parsed from the score service, multi-leg in-play plans, scalp results recorded in the journal. Tests: 276 pass.

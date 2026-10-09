@@ -513,7 +513,54 @@ class LayFavLostSet1(Strategy):
         return ("won" if pnl > 0 else "lost"), pnl / liab, pnl
 
 
-TENNIS_STRATEGIES: list[Strategy] = [BackToLayFavouriteSet(), LayFavouriteEarlyBreak(), OverGames(), FavouriteStraightSets(), SetsValue(), LayFavLostSet1()]
+class BreakPointScalp(Strategy):
+    key = "tn_bp_scalp"
+    label = "Break-point scalp (15-40 / 0-40)"
+    description = ("The TradeShark-style scalp: when a game reaches 15-40 or 0-40, back the receiver in Match Odds, green up as soon "
+                   "as the game is broken, held, or reaches deuce. Repeats in later games. No pre-match bet.")
+    best_for = "Practice in simulate or alert mode; measuring your own fills. Needs live prices to act for you."
+    avoid_when = "Real money until your own logged fills show a profit: on Grand Slam point-by-point data it loses about 2% per scalp after a 1% spread."
+    inplay = True
+    enabled_default = False   # no edge in the data (see the rationale); available for simulate and alert only
+    settlement = "unverifiable"
+    tours = ("atp", "wta")
+    proven = False
+
+    def trade_rules(self) -> list[dict]:
+        return [R.rule("bp", R.break_point_score(1, "any"), R.scalp("back", "receiver", 0.25, 6),
+                       "15-40 or 0-40 against the server: back the receiver, green on the break, hold or deuce.")]
+
+    def evaluate(self, fc: TennisForecast, prices: MarketPrices) -> StrategyResult | None:
+        mf = _market_fav(prices)
+        if mf is None:
+            return None
+        p_fav, fav = mf
+        home, away = fc.fixture.home, fc.fixture.away
+        scenarios = [Scenario("average scalp after a 1% spread each way and 5% commission (Grand Slams 2017-24)", 1.0, -0.019)]
+        plan = [note("No bet before the match. Simulate or alert only: the data shows no edge (below)."),
+                inplay("At 15-40 or 0-40 in any game (not a tiebreak): back the player receiving with a quarter of the stake."),
+                exit_("Green up as soon as that game ends (broken or held) or reaches deuce. Never carry it into the next game."),
+                note("Repeats in later games, at most six times a match. On a Delayed key TradeScout only alerts: a 5% scalp is smaller than a three-minute-old price.")]
+        rationale = [
+            "Tested on 18,500 men's and 11,200 women's 15-40 games at the Grand Slams (2011-24, with Pinnacle closing odds), against an exchange "
+            "that prices every point like the independent-points model.",
+            "Receivers do break a little more often than that model says (men 61% against 59% from 15-40 in 2017-24), but the price move "
+            "between a break and deuce is small: with no spread at all the scalp is break-even (+0.1% to -0.6% per trade).",
+            "With a 1% spread each way it loses about 2% per scalp (-1.9% men, -2.5% women in 2017-24); 0-40 and 30-40 are no better.",
+            "So the edge, if any, would have to come from a market that over-reacts at 15-40, which this data cannot show. Use simulate to measure that on live prices.",
+        ]
+        info = {"market": "MATCH_ODDS", "legs": ["home", "away"], "selection": fav, "side": "back", "fraction": 0.25, "limit": 0.0,
+                "p_trigger": 0.0, "proven": False, "trigger": "a game reaches 15-40 or 0-40",
+                "summary": "No proven edge: on Grand Slam point-by-point data the 15-40 scalp loses about 2% per trade after costs. "
+                           "Available to arm in simulate or alert mode to measure it on live prices."}
+        return StrategyResult("Match Odds (in play)", "back", "receiver at 15-40", 0, 0.0, None, None, scenarios, plan, rationale,
+                              orders=[], rules=self.trade_rules(), fav=fav, entry="inplay", entry_info=info)
+
+    def settle(self, fc: TennisForecast, result: TennisResult) -> tuple[float, float]:
+        return 0.0, 0.0  # point-level outcomes are not in the results data
+
+
+TENNIS_STRATEGIES: list[Strategy] = [BackToLayFavouriteSet(), LayFavouriteEarlyBreak(), OverGames(), FavouriteStraightSets(), SetsValue(), LayFavLostSet1(), BreakPointScalp()]
 
 
 def get_tennis_strategy(key: str) -> Strategy:

@@ -360,6 +360,8 @@ function placeButton(i, m) {
 function armIdeaButton(i) {
   if (i.entry !== 'inplay') return '';
   if (i.armed_job) return '<span class="evidence" title="See My picks > Auto-trading">Armed ✓</span>';
+  if (i.decision === 'NO TRADE' && i.entry_info && i.entry_info.proven === false)
+    return `<button class="small" data-armidea="${esc(i.strategy)}" data-sim="1" title="No proven edge: simulate or alert only">Practise in play…</button>`;
   if (i.decision !== 'ARM') return '';
   return `<button class="small primary place" data-armidea="${esc(i.strategy)}" title="No bet now: TradeScout watches the match and places the entry only if the trigger happens, at the value limit">Arm in-play entry…</button>`;
 }
@@ -498,7 +500,7 @@ async function openSlip(m, strategy, stake, src) {
 function wireIdeaButtons(m, src) {
   document.querySelectorAll('[data-autoentry]').forEach(b => b.onclick = (ev) => { ev.stopPropagation(); openArm(b.dataset.autoentry); });
   document.querySelectorAll('[data-slip]').forEach(b => b.onclick = (ev) => { ev.stopPropagation(); openSlip(m, b.dataset.slip, null, src); });
-  document.querySelectorAll('[data-armidea]').forEach(b => b.onclick = (ev) => { ev.stopPropagation(); openArmIdea(m, b.dataset.armidea, src); });
+  document.querySelectorAll('[data-armidea]').forEach(b => b.onclick = (ev) => { ev.stopPropagation(); openArmIdea(m, b.dataset.armidea, src, !!b.dataset.sim); });
   document.querySelectorAll('[data-track]').forEach(b => b.onclick = async (ev) => {
     ev.stopPropagation(); b.disabled = true; b.textContent = 'Saving…';
     try { await post('/api/journal', { date: src.date, match_id: m.id, strategy: b.dataset.track, sport: m.sport });
@@ -718,7 +720,8 @@ async function openArmIdea(m, strategy, src, simulate, mode, stake) {
     const p = await post('/api/autotrade/preview_idea', body);
     const j = p.job, info = p.entry_info || {};
     card.innerHTML = `<h2>Arm: ${esc(j.strategy_label)}</h2><div class="meta">${esc(j.home)} v ${esc(j.away)} · ${esc(j.date)} · ${mode === 'alert' ? '<b>ALERT</b>: TradeScout tells you, you place it on Betfair' : j.simulate ? '<b>SIMULATE</b>: nothing will be sent' : '<b class="neg">LIVE</b>: the entry goes to your Betfair account if the trigger happens'}</div>
-      <div class="banner" style="margin:8px 0">No bet is placed now. TradeScout watches the live score; only if <b>${esc(info.trigger || 'the trigger')}</b> does it ${mode === 'alert' ? 'alert you to' : ''} ${esc(info.side || '')} ${esc(j.legs[0].runner_name || '')} at <b>${(info.limit || 0).toFixed(2)} or ${info.side === 'lay' ? 'lower' : 'higher'}</b>. Above that price there is no value, so no bet.</div>
+      ${info.proven === false ? '<div class="warn" style="margin:8px 0">! No proven edge for this plan: it can only be armed in Simulate or Alert me mode.</div>' : ''}
+      <div class="banner" style="margin:8px 0">No bet is placed now. TradeScout watches the live score; only if <b>${esc(info.trigger || 'the trigger')}</b> does it ${mode === 'alert' ? 'alert you to' : ''} ${info.limit ? `${esc(info.side || '')} ${esc(j.legs[0].runner_name || '')} at <b>${info.limit.toFixed(2)} or ${info.side === 'lay' ? 'lower' : 'higher'}</b>. Above that price there is no value, so no bet.` : 'act, as the steps below say.'}</div>
       <div class="row" style="margin:8px 0"><label><input type="radio" name="armMode" value="auto" ${mode === 'auto' ? 'checked' : ''}> <b>Act for me</b>: TradeScout places the entry</label><label><input type="radio" name="armMode" value="alert" ${mode === 'alert' ? 'checked' : ''}> <b>Alert me</b>: I place it on Betfair</label></div>
       <h3>Steps</h3><ol style="margin:6px 0 6px 18px">${j.rules_text.map(t => `<li>${esc(t)}</li>`).join('')}</ol>
       <label class="meta">Liability (the most it can lose) £ <input id="armUnit" type="number" min="1" step="1" value="${j.unit.toFixed(2)}" style="width:90px"></label> <button id="armUnitGo" class="small">Update</button>
