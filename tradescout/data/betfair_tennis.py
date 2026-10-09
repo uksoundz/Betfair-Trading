@@ -151,13 +151,25 @@ class BetfairTennis:
         return self.bf.health
 
     def _competitions(self, event_ids: list[str]) -> dict[str, tuple[str, Optional[str]]]:
-        """event id -> (competition name, market start) in one catalogue call per 100 events (match odds only)."""
+        """event id -> (competition name, market start), match odds only, in batches that halve on TOO_MUCH_DATA."""
+        from .betfair import BetfairError
         out: dict[str, tuple[str, Optional[str]]] = {}
-        for i in range(0, len(event_ids), 100):
-            cats = self.bf._rpc("listMarketCatalogue", {"filter": {"eventIds": event_ids[i:i + 100], "marketTypeCodes": ["MATCH_ODDS"]},
-                                                       "maxResults": 200, "marketProjection": ["COMPETITION", "EVENT", "MARKET_START_TIME"]}) or []
+
+        def call(chunk: list[str]) -> None:
+            try:
+                cats = self.bf._rpc("listMarketCatalogue", {"filter": {"eventIds": chunk, "marketTypeCodes": ["MATCH_ODDS"]},
+                                                           "maxResults": min(200, len(chunk) + 5), "marketProjection": ["COMPETITION", "EVENT", "MARKET_START_TIME"]}) or []
+            except BetfairError as exc:
+                if exc.code == "TOO_MUCH_DATA" and len(chunk) > 1:
+                    call(chunk[:len(chunk) // 2])
+                    call(chunk[len(chunk) // 2:])
+                    return
+                raise
             for c in cats:
                 out[c["event"]["id"]] = (c.get("competition") or {}).get("name", ""), c.get("marketStartTime")
+
+        for i in range(0, len(event_ids), 40):
+            call(event_ids[i:i + 40])
         return out
 
     def fixtures(self, on: date, leagues: Iterable[str] | None = None) -> list[Fixture]:
@@ -303,11 +315,13 @@ class BetfairTennis:
         out: dict[str, MarketPrices] = {}
         if not fixtures:
             return out, rep
+        cat_errors: dict = {}
+        book_errors: dict = {}
         try:
             ids = {fx.label: self._event_id(fx) for fx in fixtures}
             rep.events_on_day = len(self.bf.events_on(fixtures[0].date, TENNIS_EVENT_TYPE))
-            cats = {e: self._classify(c) for e, c in self.bf.catalogue([e for e in ids.values() if e]).items()}
-            by_id = self.bf.books([c["marketId"] for cs in cats.values() for c in cs])
+            cats = {e: self._classify(c) for e, c in self.bf.catalogue([e for e in ids.values() if e], errors=cat_errors).items()}
+            by_id = self.bf.books([c["marketId"] for cs in cats.values() for c in cs], errors=book_errors)
         except Exception as exc:
             rep.error, rep.error_code = str(exc), getattr(exc, "code", None)
             for fx in fixtures:
@@ -319,6 +333,12 @@ class BetfairTennis:
             if not e:
                 mp = MarketPrices(status="no_event", note=f"No exchange event found for '{fx.label}'.")
                 rep.unmatched.append({"fixture": fx.label, "reason": mp.note, "candidates": []})
+            elif e in cat_errors or (cats.get(e) and all(c["marketId"] in book_errors for c in cats[e])):
+                rep.matched += 1
+                err = cat_errors.get(e) or book_errors[cats[e][0]["marketId"]]
+                mp = MarketPrices(status="error", note=f"Price feed error for this match: {err}")
+                if rep.error is None:
+                    rep.error, rep.error_code = str(err), getattr(err, "code", None)
             else:
                 rep.matched += 1
                 names = fx.meta.get("betfair_names") if isinstance(fx.meta, dict) else None

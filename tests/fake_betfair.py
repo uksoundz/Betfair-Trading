@@ -129,6 +129,7 @@ class FakeExchange:
         self.timeout_market_types: set[str] = set()  # placeOrders on these answers TIMEOUT but still places the order
         self.recent_refs: dict[str, float] = {}      # customerRef -> time, for DUPLICATE_TRANSACTION within 60 s
         self.catalogue_requests: list[dict] = []
+        self.weight_limit = 200  # lower it (control {"weight_limit": n}) to make the exchange stricter than documented
         self._days: dict[str, dict] = {}
         self._lock = threading.Lock()
         self._next_id = 10_000
@@ -363,7 +364,7 @@ class FakeExchange:
         weight = (1 if "MARKET_DESCRIPTION" in proj else 0) + (1 if "RUNNER_METADATA" in proj else 0)
         max_results = int(params.get("maxResults") or 1000)
         self.catalogue_requests.append({"maxResults": max_results, "weight": weight, "events": len(ids)})
-        if weight * max_results > 200:
+        if weight * max_results > self.weight_limit:
             raise ValueError("TOO_MUCH_DATA")
         out = []
         for m in self._all_markets().values():
@@ -390,7 +391,7 @@ class FakeExchange:
 
     def _m_listMarketBook(self, params: dict) -> list[dict]:
         mids = params.get("marketIds") or []
-        if len(mids) > 40:
+        if 5 * len(mids) > self.weight_limit:
             raise ValueError("TOO_MUCH_DATA")
         allm = self._all_markets()
         out = []
@@ -499,6 +500,8 @@ class FakeExchange:
             self.recent_refs.clear()
         if "reject_market_types" in body:
             self.reject_market_types = set(body["reject_market_types"] or [])
+        if "weight_limit" in body:
+            self.weight_limit = int(body["weight_limit"])
         if "timeout_market_types" in body:
             self.timeout_market_types = set(body["timeout_market_types"] or [])
         if body.get("reset_calls"):

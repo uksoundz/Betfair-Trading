@@ -49,8 +49,10 @@ def test_every_fixture_matches_an_exchange_event_in_few_calls(client, day_fixtur
     ex.control({"reset_calls": True})
     per, rep = client.prices_for_day(day_fixtures)
     assert rep.fixtures == len(day_fixtures) == rep.matched == rep.priced and not rep.unmatched and rep.error is None
-    # one listEvents, one catalogue call, and books in chunks of 25 markets: far fewer than two calls per fixture
-    assert rep.calls <= 3 + (6 * len(day_fixtures)) // 25 + 1
+    # one listEvents, catalogue calls of 10 events, books in chunks of 10 markets: well under two calls per fixture
+    from tradescout.data.betfair import BOOK_CHUNK, CATALOGUE_CHUNK
+    n = len(day_fixtures)
+    assert rep.calls <= 1 + -(-n // CATALOGUE_CHUNK) + -(-6 * n // BOOK_CHUNK) and rep.calls < 2 * n
     mp = per["Sheffield United FC v Lincoln City FC"]
     assert mp.available and mp.status == "ok" and mp.event_name == "Sheff Utd v Lincoln" and mp.home and mp.draw and mp.over_25
     assert mp.quote("MATCH_ODDS", "home").best_back and mp.quote("OVER_UNDER_25", "Over 2.5 Goals").best_lay
@@ -61,7 +63,8 @@ def test_every_fixture_matches_an_exchange_event_in_few_calls(client, day_fixtur
 def test_second_fetch_reuses_event_and_catalogue_caches(client, day_fixtures):
     client.prices_for_day(day_fixtures)
     _, rep = client.prices_for_day(day_fixtures)
-    assert rep.calls <= 1 + (6 * len(day_fixtures)) // 25 + 1  # books only
+    from tradescout.data.betfair import BOOK_CHUNK
+    assert rep.calls <= -(-6 * len(day_fixtures) // BOOK_CHUNK)  # books only
 
 
 def test_session_expiry_is_renewed_transparently(client, day_fixtures, fake):
@@ -157,7 +160,7 @@ def test_tennis_exchange_fixtures_prices_and_set_betting_orientation(fake):
     fx = bt.fixtures(DAY)
     assert len(fx) >= 5 and all(f.fixture_id.startswith("bf:") and f.league == "atp.1000" for f in fx)
     per, rep = bt.prices_for_day(fx)
-    assert rep.priced == len(fx) and rep.calls <= 4
+    assert rep.priced == len(fx) and rep.calls <= 2 + -(-len(fx) // 3) + -(-4 * len(fx) // 10)
     f0 = fx[0]
     mp = per[f0.label]
     assert mp.available and mp.quote("MATCH_ODDS", "home") and mp.quote("SET_1_WINNER", "away")
@@ -289,3 +292,31 @@ def test_rejected_login_backs_off_instead_of_retrying_every_call(fake, day_fixtu
     with pytest.raises(BetfairError):
         bad.login(force=True)  # the user's own Reconnect does try again
     assert ex.calls["login"] == before + 2
+
+
+def test_requests_shrink_when_the_exchange_says_too_large(client, day_fixtures, fake):
+    url, ex = fake
+    ex.control({"weight_limit": 20})  # far stricter than the documented 200
+    try:
+        client.invalidate()
+        per, rep = client.prices_for_day(day_fixtures)
+        assert rep.error is None and rep.priced == len(day_fixtures), rep.error
+        sizes = [r["weight"] * r["maxResults"] for r in ex.catalogue_requests]
+        assert any(x > 20 for x in sizes) and any(x <= 20 for x in sizes)  # rejected first, then shrank until accepted
+    finally:
+        ex.control({"weight_limit": 200})
+
+
+def test_a_failing_batch_only_affects_its_own_matches(client, day_fixtures, fake):
+    url, ex = fake
+    ex.control({"weight_limit": 3})  # even one event's catalogue is "too large": every match errors, nothing raises
+    try:
+        client.invalidate()
+        per, rep = client.prices_for_day(day_fixtures[:4])
+        assert rep.matched == 4 and rep.priced == 0 and rep.error_code == "TOO_MUCH_DATA" and "4 of 4" in rep.error
+        assert all(per[f.label].status == "error" and "this match" in per[f.label].note for f in day_fixtures[:4])
+    finally:
+        ex.control({"weight_limit": 200})
+        client.invalidate()
+    per, rep = client.prices_for_day(day_fixtures[:4])
+    assert rep.priced == 4 and rep.error is None

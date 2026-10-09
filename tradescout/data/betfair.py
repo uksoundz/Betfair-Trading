@@ -47,10 +47,13 @@ except Exception:  # Windows without the tzdata package: fall back to UTC (an ho
     from datetime import timezone as _tz
     UK_TZ = _tz.utc
 EVENT_TTL = 600        # seconds an event list / catalogue is reused
-BOOK_CHUNK = 25        # markets per listMarketBook call (EX_BEST_OFFERS weighs 5 each, limit 200)
-CATALOGUE_MAX = 200    # listMarketCatalogue: MARKET_DESCRIPTION weighs 1 per result, request limit 200 points
-CATALOGUE_CHUNK = 30   # events per typed catalogue call (6 market types each -> 180 rows)
-CATALOGUE_CHUNK_UNTYPED = 5  # events per untyped call (tennis lists 20-40 markets per event)
+# Request sizes. Betfair rejects a call whose data weight is too high (TOO_MUCH_DATA); the documented
+# weights are not the whole story in practice, so these start modest and every batched call halves
+# itself and retries when the exchange still says too large.
+BOOK_CHUNK = 10        # markets per listMarketBook call
+CATALOGUE_MAX = 200    # listMarketCatalogue maxResults ceiling
+CATALOGUE_CHUNK = 10   # events per typed catalogue call (6 market types each -> 60 rows)
+CATALOGUE_CHUNK_UNTYPED = 3  # events per untyped call (tennis lists 20-40 markets per event)
 LOGIN_BACKOFF = {"ACCOUNT_NOW_LOCKED": 6 * 3600, "ACCOUNT_ALREADY_LOCKED": 6 * 3600, "TEMPORARY_BAN_TOO_MANY_REQUESTS": 20 * 60,
                  "NETWORK": 60, "TIMEOUT_ERROR": 60, "UNEXPECTED_ERROR": 60}
 LOGIN_BACKOFF_DEFAULT = 30 * 60  # credential / account errors: do not retry every minute, Betfair locks the account
@@ -403,19 +406,45 @@ class BetfairPrices:
 
     def _catalogue_call(self, chunk: list[str], market_types: Iterable[str] | None) -> tuple[dict[str, list[dict]], bool]:
         flt: dict = {"eventIds": chunk}
-        if market_types:
-            flt["marketTypeCodes"] = list(market_types)
-        rows = self._rpc("listMarketCatalogue", {"filter": flt, "maxResults": CATALOGUE_MAX,
+        types = list(market_types) if market_types else []
+        if types:
+            flt["marketTypeCodes"] = types
+        # ask only for as many rows as the chunk can produce: the request weight scales with maxResults
+        max_results = min(CATALOGUE_MAX, len(chunk) * len(types) + 5) if types else CATALOGUE_MAX
+        rows = self._rpc("listMarketCatalogue", {"filter": flt, "maxResults": max_results,
                                                 "marketProjection": ["RUNNER_DESCRIPTION", "MARKET_DESCRIPTION", "EVENT", "MARKET_START_TIME"]}) or []
         grouped: dict[str, list[dict]] = {e: [] for e in chunk}
         for c in rows:
             grouped.setdefault((c.get("event") or {}).get("id"), []).append(c)
-        return grouped, len(rows) >= CATALOGUE_MAX
+        return grouped, len(rows) >= max_results
 
-    def catalogue(self, event_ids: Iterable[str], market_types: Iterable[str] | None = None) -> dict[str, list[dict]]:
-        """event id -> market catalogue rows (runners + description), batched within Betfair's 200-point
-        request limit and cached per event. A response that hits the limit may have dropped whole
-        events, so those are re-fetched one at a time rather than cached as having no markets."""
+    def _catalogue_adaptive(self, chunk: list[str], market_types, errors: Optional[dict]) -> dict[str, list[dict]]:
+        """One catalogue call that halves itself on TOO_MUCH_DATA. With `errors`, a chunk that still fails is
+        recorded per event instead of failing the whole day."""
+        try:
+            grouped, truncated = self._catalogue_call(chunk, market_types)
+        except BetfairError as exc:
+            if exc.code == "TOO_MUCH_DATA" and len(chunk) > 1:
+                mid = len(chunk) // 2
+                out = self._catalogue_adaptive(chunk[:mid], market_types, errors)
+                out.update(self._catalogue_adaptive(chunk[mid:], market_types, errors))
+                return out
+            if errors is None:
+                raise
+            for e in chunk:
+                errors[e] = exc
+            return {}
+        if truncated and len(chunk) > 1:  # the response hit the cap: one event at a time so none is cut off
+            out: dict[str, list[dict]] = {}
+            for e in chunk:
+                out.update(self._catalogue_adaptive([e], market_types, errors))
+            return out
+        return grouped
+
+    def catalogue(self, event_ids: Iterable[str], market_types: Iterable[str] | None = None, errors: Optional[dict] = None) -> dict[str, list[dict]]:
+        """event id -> market catalogue rows (runners + description), batched, cached per event, and
+        shrinking automatically when Betfair says a request is too large. Pass `errors` (a dict) to have
+        failures recorded per event rather than raised."""
         wanted = [e for e in dict.fromkeys(event_ids) if e]
         out: dict[str, list[dict]] = {}
         missing = []
@@ -429,11 +458,7 @@ class BetfairPrices:
         chunk_size = CATALOGUE_CHUNK if market_types else CATALOGUE_CHUNK_UNTYPED
         for i in range(0, len(missing), chunk_size):
             chunk = missing[i:i + chunk_size]
-            grouped, truncated = self._catalogue_call(chunk, market_types)
-            if truncated and len(chunk) > 1:
-                for e in chunk:  # one event at a time: no event can be silently cut off
-                    single, _ = self._catalogue_call([e], market_types)
-                    grouped[e] = single.get(e, [])
+            grouped = self._catalogue_adaptive(chunk, market_types, errors)
             with self._lock:
                 for e, cats in grouped.items():
                     if e in chunk:
@@ -441,14 +466,28 @@ class BetfairPrices:
                         out[e] = cats
         return out
 
-    def books(self, market_ids: Iterable[str]) -> dict[str, dict]:
+    def _books_adaptive(self, ids: list[str], errors: Optional[dict]) -> dict[str, dict]:
+        try:
+            rows = self._rpc("listMarketBook", {"marketIds": ids, "priceProjection": {"priceData": ["EX_BEST_OFFERS"], "virtualise": True}}) or []
+            return {b["marketId"]: b for b in rows}
+        except BetfairError as exc:
+            if exc.code == "TOO_MUCH_DATA" and len(ids) > 1:
+                mid = len(ids) // 2
+                out = self._books_adaptive(ids[:mid], errors)
+                out.update(self._books_adaptive(ids[mid:], errors))
+                return out
+            if errors is None:
+                raise
+            for m in ids:
+                errors[m] = exc
+            return {}
+
+    def books(self, market_ids: Iterable[str], errors: Optional[dict] = None) -> dict[str, dict]:
+        """market id -> price book, in small batches that halve themselves on TOO_MUCH_DATA."""
         ids = [m for m in dict.fromkeys(market_ids) if m]
         out: dict[str, dict] = {}
         for i in range(0, len(ids), BOOK_CHUNK):
-            rows = self._rpc("listMarketBook", {"marketIds": ids[i:i + BOOK_CHUNK],
-                                                "priceProjection": {"priceData": ["EX_BEST_OFFERS"], "virtualise": True}}) or []
-            for b in rows:
-                out[b["marketId"]] = b
+            out.update(self._books_adaptive(ids[i:i + BOOK_CHUNK], errors))
         return out
 
     # ------------------------------------------------------------------ prices
@@ -549,17 +588,11 @@ class BetfairPrices:
         if not fixtures:
             return out, rep
         try:
+            evs = self.events_on(fixtures[0].date)
+            rep.events_on_day = len(evs)
+            rep.event_names = sorted((e.get("event") or {}).get("name", "") for e in evs)
             matches = {fx.label: self.match_fixture(fx) for fx in fixtures}
-            try:
-                evs = self.events_on(fixtures[0].date)
-                rep.events_on_day = len(evs)
-                rep.event_names = sorted((e.get("event") or {}).get("name", "") for e in evs)
-            except BetfairError:
-                raise
-            matched_ids = [m.event_id for m in matches.values() if m.event_id]
-            cats = self.catalogue(matched_ids, MARKETS)
-            by_id = self.books([c["marketId"] for e in matched_ids for c in cats.get(e, [])])
-        except BetfairError as exc:
+        except BetfairError as exc:  # no event list at all: nothing can be matched
             rep.error, rep.error_code = str(exc), exc.code
             for fx in fixtures:
                 out[fx.label] = MarketPrices(status="error", note=str(exc))
@@ -567,23 +600,44 @@ class BetfairPrices:
             rep.calls = self.health.calls - calls0
             rep.fetched_at = _now()
             return out, rep
+        matched_ids = [m.event_id for m in matches.values() if m.event_id]
+        cat_errors: dict = {}
+        book_errors: dict = {}
+        cats = self.catalogue(matched_ids, MARKETS, errors=cat_errors)
+        by_id = self.books([c["marketId"] for e in matched_ids for c in cats.get(e, [])], errors=book_errors)
+        failed = 0
         for fx in fixtures:
             m = matches[fx.label]
             if not m.event_id:
                 mp = MarketPrices(status="no_event", note=m.reason, candidates=list(m.candidates))
                 rep.unmatched.append({"fixture": fx.label, "reason": m.reason, "candidates": [list(c) for c in m.candidates]})
-            else:
-                rep.matched += 1
-                mp = self._build_prices(fx, cats.get(m.event_id, []), by_id, m)
-                if mp.status == "ok":
-                    rep.priced += 1
-                elif mp.status == "inplay":
-                    rep.inplay.append(fx.label)
-                elif mp.status == "suspended":
-                    rep.suspended.append(fx.label)
-                if mp.delayed is not None and rep.delayed is None:
-                    rep.delayed = mp.delayed
+                out[fx.label] = mp
+                continue
+            rep.matched += 1
+            fx_cats = cats.get(m.event_id, [])
+            err = cat_errors.get(m.event_id)
+            if err is None and fx_cats and all(c["marketId"] in book_errors for c in fx_cats):
+                err = book_errors[fx_cats[0]["marketId"]]
+            if err is not None:
+                failed += 1
+                mp = MarketPrices(status="error", note=f"Price feed error for this match: {err}", event_id=m.event_id, event_name=m.event_name)
+                if rep.error is None:
+                    rep.error_code = getattr(err, "code", None)
+                    rep.error = str(err)
+                out[fx.label] = mp
+                continue
+            mp = self._build_prices(fx, fx_cats, by_id, m)
+            if mp.status == "ok":
+                rep.priced += 1
+            elif mp.status == "inplay":
+                rep.inplay.append(fx.label)
+            elif mp.status == "suspended":
+                rep.suspended.append(fx.label)
+            if mp.delayed is not None and rep.delayed is None:
+                rep.delayed = mp.delayed
             out[fx.label] = mp
+        if rep.error is not None:
+            rep.error = f"{failed} of {rep.matched} matched fixtures could not be priced: {rep.error}"
         if rep.delayed is not None:
             self.health.delayed = rep.delayed
         rep.elapsed_ms = int((time.time() - t0) * 1000)
