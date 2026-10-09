@@ -125,3 +125,13 @@ def test_combined_hedge_settles_as_one_position(provider, forecaster, fixtures):
     assert (hit == 1.0) == (expected > 0)
     res_10 = MatchResult(fc.fixture.date, fc.fixture.league, fc.fixture.home, fc.fixture.away, 1, 0, 1, 0)
     assert s.settle(fc, res_10) == (0.0, -1.0)
+
+
+def test_stars_grade_trades_on_the_current_score_scale():
+    from datetime import date
+    from tradescout.models import Fixture, TradeIdea
+    def idea(score, decision):
+        return TradeIdea(Fixture(date(2026, 1, 1), "en.1", "A", "B"), "x", "x", "M", "back", "s", 0.5, 2.0, None, None, 0.0, 1.0, -1.0, 0.5, 0.0,
+                         None, 0, 1.0, 1.0, score, 0.0, [], [], decision=decision)
+    assert [idea(s, "TRADE").stars for s in (1, 5, 15, 30, 50, 80)] == [1, 2, 3, 4, 5, 5]
+    assert idea(39, "NO TRADE").stars == 0 and idea(39, "RESEARCH").stars == 0

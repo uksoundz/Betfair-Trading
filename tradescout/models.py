@@ -191,7 +191,16 @@ class TradeIdea:
     risk_notes: list = field(default_factory=list)
     sport: str = "football"
 
+    # Stars grade TRADE ideas only, on the rank score (10 points per 1% of conservative net edge after
+    # commission, times execution quality 0..1 and evidence weight: 1.0 when the plan settles at the result,
+    # 0.6 when its exits are simulated in play). NO TRADE and RESEARCH ideas get no stars.
+    STAR_BANDS = ((50.0, 5), (30.0, 4), (15.0, 3), (5.0, 2))
+
     @property
     def stars(self) -> int:
-        s = self.score
-        return 5 if s >= 58 else 4 if s >= 54 else 3 if s >= 50 else 2 if s >= 46 else 1
+        if self.decision != "TRADE":
+            return 0
+        for floor, n in self.STAR_BANDS:
+            if self.score >= floor:
+                return n
+        return 1
