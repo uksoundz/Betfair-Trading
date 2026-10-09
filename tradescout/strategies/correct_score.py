@@ -19,6 +19,10 @@ class CorrectScoreBasket(Strategy):
     inplay = False
     enabled_default = False  # -13% model-synthetic ROI: a 10% correct-score overround is not beaten by this model
 
+    def trade_rules(self) -> list[dict]:
+        """The plan's in-play steps as rules for armed auto-trading (independent of today's prices)."""
+        return []
+
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         ranked = sorted(fc.p_cs.items(), key=lambda kv: -kv[1])[:BASKET_SIZE]
         covered = sum(p for _, p in ranked)
@@ -52,7 +56,7 @@ class CorrectScoreBasket(Strategy):
         return StrategyResult("Correct Score", "back", legs[0][0], covered, 1 / legs[0][1],
                               prices.correct_scores.get(legs[0][0]) if any_market else None, edge, scenarios, plan, rationale,
                               orders=[OrderLeg("CORRECT_SCORE", s, "back", round(pr, 1), (1 / pr) / book, "stake", f"{p:.0%} model", p_model=p) for s, p, pr in legs],
-                              rules=[])  # basket rebalancing after goals is a judgement call: not automated
+                              rules=self.trade_rules())  # basket rebalancing after goals is a judgement call: not automated
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         ranked = sorted(fc.p_cs.items(), key=lambda kv: -kv[1])[:BASKET_SIZE]

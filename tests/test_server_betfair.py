@@ -17,7 +17,7 @@ DAY = "2026-10-10"
 def srv(tmp_path_factory):
     srv, url, ex = serve(edge=0.5)
     env = {"BETFAIR_LOGIN_URL": url + "/api/login", "BETFAIR_KEEPALIVE_URL": url + "/api/keepAlive", "BETFAIR_BETTING_URL": url + "/exchange/betting/json-rpc/v1",
-           "BETFAIR_ACCOUNTS_URL": url + "/exchange/account/json-rpc/v1"}
+           "BETFAIR_ACCOUNTS_URL": url + "/exchange/account/json-rpc/v1", "BETFAIR_SCORES_URL": url + "/inplayservice/v1"}
     old = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
     from tradescout.config import settings
@@ -272,3 +272,59 @@ def test_autotrade_refuses_plans_without_automated_rules(srv, tmp_path):
         e.rules, e.strategy = saved
     finally:
         server.settings.autotrade = False
+
+
+
+def test_adopt_a_bet_placed_on_the_betfair_website(srv, tmp_path):
+    from tradescout.autotrade import position as P
+    server, c, ex = srv
+    server.autotrader.path = tmp_path / "adopt.json"
+    server.autotrader.jobs = {}
+    server.autotrader.auto_start = False
+    ex.control({"delayed": False})
+    bf = server.rt.betfair
+    r = c.get(f"/api/scan?date={DAY}&sport=football").json()
+    m = r["matches"][-1]
+    from tradescout.models import Fixture
+    fx = next(f for f in server.rt.fixture_cache[f"football:{DAY}"] if f.home == m["home"])
+    full = bf.resolve_full(fx, "MATCH_ODDS", "draw")
+    # placed "on the website": no TradeScout tag on the order
+    rep = bf._rpc("placeOrders", {"marketId": full["market_id"], "instructions": [{"selectionId": full["selection_id"], "handicap": 0, "side": "LAY", "orderType": "LIMIT",
+                                  "limitOrder": {"size": 4.0, "price": full["best_lay"], "persistenceType": "LAPSE"}}], "customerRef": "website-bet"})
+    bet = rep["instructionReports"][0]["betId"]
+    rows = c.get("/api/autotrade/betfair_bets").json()["bets"]
+    row = next(x for x in rows if bet in x["bet_ids"])
+    assert row["side"] == "lay" and row["runner_name"] == "The Draw" and row["sport"] == "football" and [p["key"] for p in row["plans"]] == ["ltd"]
+    server.settings.autotrade = True
+    try:
+        p = c.post("/api/autotrade/preview_bet", json={"key": row["key"], "strategy": "ltd"}).json()
+        assert p["job"]["rules_text"] and abs(p["job"]["unit"] - row["liability"]) < 0.01 and any("Adopted" in w for w in p["warnings"])
+        assert c.post("/api/autotrade/preview_bet", json={"key": row["key"], "strategy": "b2l_fav"}).status_code == 400  # wrong plan for a draw lay
+        a = c.post("/api/autotrade/arm_bet", json={"key": row["key"], "strategy": "ltd", "confirm": True}).json()
+        job = server.autotrader.jobs[a["job"]["id"]]
+        assert c.get("/api/autotrade/betfair_bets").json()["bets"][[x["key"] for x in rows].index(row["key"])]["armed_job"] == job.id
+        name = m["exchange_event"]
+        ex.control({"price": {"event": name, "market_type": "MATCH_ODDS", "runner": "The Draw", "back": 6.0, "lay": 6.2}})
+        ex.control({"play": {"event": name, "minute": 25, "home": 1, "away": 0, "first_goal": "home"}})
+        server.autotrader.tick()
+        assert job.state == "done", job.log
+        mine = [o for o in ex.orders if o["betId"] in job.bet_ids]
+        exp = P.exposure(mine, full["selection_id"])
+        assert abs(exp.win - exp.lose) < 0.5 and exp.worst > 0
+    finally:
+        server.settings.autotrade = False
+        ex.control({"inplay": []})
+
+
+def test_plans_offered_for_outside_bets():
+    from tradescout.autotrade.adopt import plans_for
+    assert plans_for("MATCH_ODDS", "The Draw", "lay", "football") == ["ltd"]
+    assert plans_for("MATCH_ODDS", "Arsenal", "back", "football") == ["b2l_fav"]
+    assert plans_for("OVER_UNDER_25", "Over 2.5 Goals", "back", "football") == ["over25_ins"]
+    assert plans_for("OVER_UNDER_25", "Under 2.5 Goals", "lay", "football") == ["lay_under25_staged"]
+    assert plans_for("OVER_UNDER_25", "Under 2.5 Goals", "back", "football") == ["under25_tradeout"]
+    assert plans_for("CORRECT_SCORE", "0 - 0", "lay", "football") == ["lay_00"]
+    assert plans_for("CORRECT_SCORE", "1 - 1", "back", "football") == []
+    assert plans_for("MATCH_ODDS", "C Alcaraz", "back", "tennis") == ["tn_b2l_fav"]
+    assert plans_for("COMBINED_TOTAL", "Over 22.5", "back", "tennis") == ["tn_over_games"]
+    assert plans_for("MATCH_ODDS", "C Alcaraz", "lay", "tennis") == []

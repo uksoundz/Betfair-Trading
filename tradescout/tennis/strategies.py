@@ -41,6 +41,11 @@ class BackToLayFavouriteSet(Strategy):
     settlement = "approximate"
     enabled_default = False  # -6% per unit at model prices in both 2024 and 2025 (profit factor 0.69): exits cost more than the set-one signal is worth
 
+    def trade_rules(self) -> list[dict]:
+        """The plan's in-play steps as rules for armed auto-trading (independent of today's prices)."""
+        return [R.rule("set1_won", R.set_won(1, "fav"), R.green(0), "Favourite wins set 1: lay the favourite to lock an equal profit.", final=True),
+                                     R.rule("set1_lost", R.set_won(1, "dog"), R.green(0), "Favourite loses set 1: lay the favourite and take the loss.", final=True)]
+
     def evaluate(self, fc: TennisForecast, prices: MarketPrices) -> StrategyResult | None:
         mkt, fav_home = _fav_prices(fc, prices)
         p_fav = fc.p_fav
@@ -71,8 +76,7 @@ class BackToLayFavouriteSet(Strategy):
         ]
         return StrategyResult("Match Odds", "back", fav, 0, 1 / p_fav, mkt if is_market else None, edge, scenarios, plan, rationale,
                               orders=[OrderLeg("MATCH_ODDS", "home" if fav_home else "away", "back", round(price, 2), 1.0, "stake", "back the favourite pre-match", p_model=p_fav)],
-                              rules=[R.rule("set1_won", R.set_won(1, "fav"), R.green(0), "Favourite wins set 1: lay the favourite to lock an equal profit.", final=True),
-                                     R.rule("set1_lost", R.set_won(1, "dog"), R.green(0), "Favourite loses set 1: lay the favourite and take the loss.", final=True)])
+                              rules=self.trade_rules())
 
     def settle(self, fc: TennisForecast, result: TennisResult) -> tuple[float, float]:
         mkt, fav_home = _fav_prices(fc, MarketPrices())
@@ -94,6 +98,10 @@ class LayFavouriteEarlyBreak(Strategy):
     avoid_when = "Underdogs who get broken early and often, or clay where the favourite's returning edge shows quickly."
     settlement = "unverifiable"   # who broke first is not in the results data; the backtest cannot settle this plan
     enabled_default = False
+
+    def trade_rules(self) -> list[dict]:
+        """The plan's in-play steps as rules for armed auto-trading (independent of today's prices)."""
+        return []
 
     def evaluate(self, fc: TennisForecast, prices: MarketPrices) -> StrategyResult | None:
         mkt, fav_home = _fav_prices(fc, prices)
@@ -129,7 +137,7 @@ class LayFavouriteEarlyBreak(Strategy):
         ]
         return StrategyResult("Match Odds", "lay", fav, 0, 1 / p_fav, mkt if is_market else None, edge, scenarios, plan, rationale,
                               orders=[OrderLeg("MATCH_ODDS", "home" if fav_home else "away", "lay", round(price, 2), 1.0, "liability", "lay the favourite pre-match", p_model=p_fav)],
-                              rules=[])  # break-of-serve triggers need a point-by-point feed: not automated
+                              rules=self.trade_rules())  # break-of-serve triggers need a point-by-point feed: not automated
 
     def settle(self, fc: TennisForecast, result: TennisResult) -> tuple[float, float]:
         """Who broke first is not in the results, so settle as an expectation: the first-set winner
@@ -157,6 +165,11 @@ class OverGames(Strategy):
     avoid_when = "A heavy favourite (short matches), clay returners, or a player with injury doubts."
     inplay = False
 
+    def trade_rules(self) -> list[dict]:
+        """The plan's in-play steps as rules for armed auto-trading (independent of today's prices)."""
+        return [R.rule("tiebreak", R.set_tiebreak(1), R.green(0), "Set 1 reaches a tiebreak: lay Over to lock the profit.", final=True),
+                                     R.rule("rout", R.set_won_easily(1, "fav", 2), R.green(0), "Favourite takes set 1 6-0, 6-1 or 6-2: lay Over to cut the loss.", final=True)]
+
     def evaluate(self, fc: TennisForecast, prices: MarketPrices) -> StrategyResult | None:
         # choose the line with P(over) closest to 55%, among the lines the exchange actually quotes when known
         quoted = []
@@ -182,8 +195,7 @@ class OverGames(Strategy):
                      f"Both hold serve well: {fc.pa_serve:.0%} and {fc.pb_serve:.0%} of serve points", f"Match {fc.p_a:.0%} / {1-fc.p_a:.0%}"]
         return StrategyResult("Total Games", "back", f"Over {line:g}", 0, 1 / p_over, None, None, scenarios, plan, rationale,
                               orders=[OrderLeg("TOTAL_GAMES", f"Over {line:g}", "back", round(price, 2), 1.0, "stake", "total games line", p_model=p_over)],
-                              rules=[R.rule("tiebreak", R.set_tiebreak(1), R.green(0), "Set 1 reaches a tiebreak: lay Over to lock the profit.", final=True),
-                                     R.rule("rout", R.set_won_easily(1, "fav", 2), R.green(0), "Favourite takes set 1 6-0, 6-1 or 6-2: lay Over to cut the loss.", final=True)])
+                              rules=self.trade_rules())
 
     def settle(self, fc: TennisForecast, result: TennisResult) -> tuple[float, float]:
         line, p_over = min(fc.p_over.items(), key=lambda kv: abs(kv[1] - 0.55))
@@ -201,6 +213,11 @@ class FavouriteStraightSets(Strategy):
     best_for = "Dominant favourites (70%+) on their best surface against opponents who do not hold serve well."
     avoid_when = "Best-of-five against a big server, or when the favourite is priced near evens."
     inplay = False
+
+    def trade_rules(self) -> list[dict]:
+        """The plan's in-play steps as rules for armed auto-trading (independent of today's prices)."""
+        return [R.rule("halved", R.all_of(R.set_won(1, "fav"), R.price_ratio_at_most(0, 0.5)), R.green(0),
+                                            "Favourite wins set 1 and the price has halved: lay the same selection to green up.", final=True)]
 
     def evaluate(self, fc: TennisForecast, prices: MarketPrices) -> StrategyResult | None:
         fav_home = fc.p_a >= 0.5
@@ -221,8 +238,7 @@ class FavouriteStraightSets(Strategy):
                      f"{fav} win each set about {(fc.p_set1_a if fav_home else 1-fc.p_set1_a):.0%} of the time"]
         return StrategyResult("Set Betting", "back", f"{fav} {label}", 0, 1 / p, mkt if is_market else None, edge, scenarios, plan, rationale,
                               orders=[OrderLeg("SET_BETTING", key, "back", round(price, 2), 1.0, "stake", "straight sets", p_model=p)],
-                              rules=[R.rule("halved", R.all_of(R.set_won(1, "fav"), R.price_ratio_at_most(0, 0.5)), R.green(0),
-                                            "Favourite wins set 1 and the price has halved: lay the same selection to green up.", final=True)])
+                              rules=self.trade_rules())
 
     def settle(self, fc: TennisForecast, result: TennisResult) -> tuple[float, float]:
         fav_home = fc.p_a >= 0.5

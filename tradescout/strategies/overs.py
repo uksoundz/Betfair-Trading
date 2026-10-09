@@ -16,6 +16,11 @@ class BackOversWithInsurance(Strategy):
     needs_prices = ("over_25",)
     inplay = False
 
+    def trade_rules(self) -> list[dict]:
+        """The plan's in-play steps as rules for armed auto-trading (independent of today's prices)."""
+        return [R.rule("early_goal", R.all_of(R.goals_at_least(1), R.minute_before(20)), R.free_bet(0),
+                                            "A goal before 20': lay Over 2.5 for the original stake, leaving a free bet. The 1-1 keeps running.")]
+
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         p_over = fc.p_over[2.5]
         if p_over < 0.50 or fc.total_xg < 2.6:
@@ -54,8 +59,7 @@ class BackOversWithInsurance(Strategy):
                               scenarios, plan, rationale, warnings,
                               orders=[OrderLeg("OVER_UNDER_25", "Over 2.5 Goals", "back", round(o_price, 2), w_over, "stake", "main leg", p_model=p_over),
                                       OrderLeg("CORRECT_SCORE", "1-1", "back", round(c_price, 2), w_ins, "stake", "insurance leg", p_model=p11)],
-                              rules=[R.rule("early_goal", R.all_of(R.goals_at_least(1), R.minute_before(20)), R.free_bet(0),
-                                            "A goal before 20': lay Over 2.5 for the original stake, leaving a free bet. The 1-1 keeps running.")])
+                              rules=self.trade_rules())
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p_over = fc.p_over[2.5]
@@ -78,6 +82,13 @@ class LayUndersStaged(Strategy):
     avoid_when = "Under 2.5 already below 1.7, or defensive sides where a slow start is likely to stay slow."
     needs_prices = ("under_25",)
     settlement = "approximate"
+
+    def trade_rules(self) -> list[dict]:
+        """The plan's in-play steps as rules for armed auto-trading (independent of today's prices)."""
+        return [R.rule("scale15", R.all_of(R.minute_at_least(15), R.minute_before(25), R.goals_at_most(0), R.price_not_worse_than_entry(0)), R.scale_in(0, 0.5),
+                                            "On 15' if still 0-0 and the Under price has shortened or held: lay Under 2.5 with the second half of the liability."),
+                                     R.rule("second_goal", R.goals_at_least(2), R.green(0), "Second goal: back Under 2.5 to lock in the profit.", final=True),
+                                     R.rule("stop70", R.all_of(R.minute_at_least(70), R.goals_at_most(0)), R.green(0), "Still 0-0 on 70': back Under 2.5 and close.", final=True)]
 
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         p_under = 1 - fc.p_over[2.5]
@@ -117,10 +128,7 @@ class LayUndersStaged(Strategy):
                               scenarios, plan, rationale,
                               orders=[OrderLeg("OVER_UNDER_25", "Under 2.5 Goals", "lay", round(u0, 2), 0.5, "liability",
                                                "first half of the liability; the second half goes on in play at 15 minutes if still 0-0", p_model=p_under)],
-                              rules=[R.rule("scale15", R.all_of(R.minute_at_least(15), R.minute_before(25), R.goals_at_most(0), R.price_not_worse_than_entry(0)), R.scale_in(0, 0.5),
-                                            "On 15' if still 0-0 and the Under price has shortened or held: lay Under 2.5 with the second half of the liability."),
-                                     R.rule("second_goal", R.goals_at_least(2), R.green(0), "Second goal: back Under 2.5 to lock in the profit.", final=True),
-                                     R.rule("stop70", R.all_of(R.minute_at_least(70), R.goals_at_most(0)), R.green(0), "Still 0-0 on 70': back Under 2.5 and close.", final=True)])
+                              rules=self.trade_rules())
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p_under = 1 - fc.p_over[2.5]

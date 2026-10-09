@@ -33,7 +33,7 @@ tradescout scan --date 2025-11-08   # football replay in the terminal
 tradescout scan --sport tennis --date 2025-06-02
 tradescout betfair-check            # Betfair login test and, per fixture, the exchange event matched or why not
 tradescout holdout                  # out-of-sample protocol for both sports (writes data/strategy_stats.json)
-pytest                              # 256 tests (incl. the Betfair client, routes, placement and auto-trading against a local stand-in exchange)
+pytest                              # 258 tests (incl. the Betfair client, routes, placement and auto-trading against a local stand-in exchange)
 ```
 
 Windows: `install.bat` then `app.bat`.

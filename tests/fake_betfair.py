@@ -400,6 +400,9 @@ class FakeExchange:
                 row["event"] = m["event"]
             if "COMPETITION" in proj:
                 row["competition"] = m["competition"]
+            if "EVENT_TYPE" in proj:
+                tennis = int(m["_event"]) >= 34_000_000
+                row["eventType"] = {"id": "2" if tennis else "1", "name": "Tennis" if tennis else "Soccer"}
             out.append(row)
         out.sort(key=lambda r: r["marketId"])
         return out[:max_results]

@@ -18,6 +18,11 @@ class LayTheDraw(Strategy):
     needs_prices = ("draw",)
     settlement = "approximate"
 
+    def trade_rules(self) -> list[dict]:
+        """The plan's in-play steps as rules for armed auto-trading (independent of today's prices)."""
+        return [R.rule("first_goal", R.goals_at_least(1), R.green(0), "First goal, either side: back the draw to green up (profit if the favourite scored, small loss if the underdog did).", final=True),
+                                     R.rule("stop70", R.all_of(R.minute_at_least(EXIT_MINUTE), R.goals_at_most(0)), R.green(0), "Still 0-0 on 70': back the draw and close.", final=True)]
+
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         price, is_market = self.price_or_fair(prices.draw, fc.p_draw, "lay")
         if price < 2.6:
@@ -57,8 +62,7 @@ class LayTheDraw(Strategy):
         return StrategyResult("Match Odds", "lay", "The Draw", hit, 1 / fc.p_draw, prices.draw if is_market else None, edge,
                               scenarios, plan, rationale, warnings,
                               orders=[OrderLeg("MATCH_ODDS", "draw", "lay", round(price, 2), 1.0, "liability", "lay the draw pre-match", p_model=fc.p_draw)],
-                              rules=[R.rule("first_goal", R.goals_at_least(1), R.green(0), "First goal, either side: back the draw to green up (profit if the favourite scored, small loss if the underdog did).", final=True),
-                                     R.rule("stop70", R.all_of(R.minute_at_least(EXIT_MINUTE), R.goals_at_most(0)), R.green(0), "Still 0-0 on 70': back the draw and close.", final=True)])
+                              rules=self.trade_rules())
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         price, _ = self.price_or_fair(None, fc.p_draw, "lay")

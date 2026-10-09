@@ -224,6 +224,9 @@ def _idea_json(i, fc, result, sport: str) -> dict:
         "settlement": strat.settlement, "inplay": strat.inplay, "sport": sport,
         "tracked": any(e.date == i.fixture.date.isoformat() and e.home == i.fixture.home and e.away == i.fixture.away and e.strategy == i.strategy
                        for e in journal.entries),
+        "placed_entry": next((e.id for e in journal.entries if e.date == i.fixture.date.isoformat() and e.home == i.fixture.home and e.away == i.fixture.away
+                              and e.strategy == i.strategy and e.placed in ("live", "paper")), None),
+        "automatable": bool(i.rules),
     }
     if result is not None:
         hit, pnl = strat.settle(fc, result)
@@ -850,19 +853,8 @@ def _job_for_entry(entry_id: str, simulate: bool, mode: str = "auto") -> tuple:
         raise HTTPException(404, "That pick is not in My picks.")
     rules = list(e.rules or [])
     fav = e.fav or "home"
-    if not rules:
-        strat = get_strategy(e.strategy)
-        rules = []
-        try:
-            from ..models import Fixture as _Fx, MarketPrices as _MP
-            scout = rt.scout_for(e.sport or "football")
-            fx = _Fx(date.fromisoformat(e.date), e.league, e.home, e.away)
-            fc = scout.forecaster(fx.date).forecast(fx)
-            r = strat.evaluate(fc, _MP())
-            rules = list(getattr(r, "rules", []) or []) if r else []
-            fav = getattr(fc, "favourite", None) or ("home" if getattr(fc, "p_a", 0.5) >= 0.5 else "away")
-        except Exception:
-            rules = []
+    if not rules:  # picks saved before plans carried their rules
+        rules = get_strategy(e.strategy).trade_rules()
     if not rules:
         raise HTTPException(400, f"{e.strategy_label}: this plan's in-play steps are not automated (they need a judgement call or data the app does not have). Trade it by hand.")
     legs = []
@@ -915,6 +907,101 @@ def _job_for_entry(entry_id: str, simulate: bool, mode: str = "auto") -> tuple:
                         "In 'act for me' mode TradeScout finds the real price by trading: a first part of each hedge goes with a protective limit, the real matched "
                         "price comes back at once, and the rest is sized from it. In 'alert me' mode you act yourself with Cash Out, which uses live prices.")
     return job, names, warnings
+
+
+# ---- adopting a bet placed on Betfair itself
+class BetIn(BaseModel):
+    key: str                 # market_id:selection_id:handicap
+    strategy: str
+    simulate: bool = False
+    mode: str = "auto"
+    unit: Optional[float] = None
+    confirm: bool = False
+
+
+def _betfair_positions() -> list[dict]:
+    from ..autotrade.adopt import positions
+    bf = rt.betfair
+    orders = bf.my_orders()
+    cats = bf.markets_by_id(sorted({o["marketId"] for o in orders}))
+    rows = positions(orders, cats)
+    armed = {j.entry_id: j.id for j in autotrader.active()}
+    for r in rows:
+        r["armed_job"] = armed.get("betfair:" + r["key"])
+    return rows
+
+
+@app.get("/api/autotrade/betfair_bets")
+def autotrade_betfair_bets():
+    if rt.betfair is None:
+        return {"ok": False, "error": "Betfair is not set up.", "bets": []}
+    try:
+        return {"ok": True, "bets": _betfair_positions()}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "bets": []}
+
+
+def _job_for_bet(body: BetIn) -> tuple:
+    from ..autotrade.adopt import fav_side, plans_for
+    if rt.betfair is None:
+        raise HTTPException(400, "Betfair is not set up.")
+    if not settings.autotrade:
+        raise HTTPException(403, "Auto-trading is switched off. Turn it on in Settings > Betting first.")
+    row = next((r for r in _betfair_positions() if r["key"] == body.key), None)
+    if row is None:
+        raise HTTPException(404, "That bet is no longer open on your Betfair account (settled, or nothing matched yet).")
+    if body.strategy not in plans_for(row["market_type"], row["runner_name"], row["side"], row["sport"]):
+        raise HTTPException(400, f"That plan does not start with a {row['side']} of {row['runner_name']} ({row['market_name']}).")
+    simulate = body.simulate
+    if not simulate:
+        if settings.betting_mode != "live":
+            raise HTTPException(403, "Betting mode is not Live; arm it in simulate or alert mode, or switch to Live in Settings.")
+        if not rt.betfair_ok:
+            raise HTTPException(400, "Betfair is not connected.")
+    strat = get_strategy(body.strategy)
+    fav = fav_side(row)
+    if row["sport"] == "tennis" and row["market_type"] not in ("MATCH_ODDS", "SET_BETTING"):
+        try:  # the favourite is whoever is shorter in match odds
+            mo = next((c for c in rt.betfair.catalogue([row["event_id"]]).get(row["event_id"], []) if (c.get("description") or {}).get("marketType") == "MATCH_ODDS"), None)
+            if mo:
+                book = rt.betfair.books([mo["marketId"]]).get(mo["marketId"], {})
+                best = {r["selectionId"]: ((r.get("ex") or {}).get("availableToBack") or [{"price": 1000}])[0]["price"] for r in book.get("runners", [])}
+                short = min(best, key=best.get) if best else None
+                sp = next((r.get("sortPriority") for r in mo.get("runners", []) if r["selectionId"] == short), 1)
+                fav = "home" if sp == 1 else "away"
+        except Exception:
+            pass
+    risk = row["liability"]
+    default_unit = round(2 * risk, 2) if body.strategy == "lay_under25_staged" else risk  # staged plans add their second half in play
+    unit = float(body.unit) if body.unit else default_unit
+    leg = {"market": row["market_type"], "market_label": row["market_name"], "market_id": row["market_id"], "selection": row["runner_name"],
+           "selection_id": row["selection_id"], "handicap": row["handicap"], "side": row["side"], "entry_price": row["avg_price"], "size": row["size"],
+           "runner_name": row["runner_name"]}
+    job = new_job(entry_id="betfair:" + row["key"], sport=row["sport"], date=(row.get("start") or "")[:10], home=row["home"], away=row["away"], fav=fav,
+                  strategy=strat.key, strategy_label=strat.label, event_id=row["event_id"], legs=[leg], rules=strat.trade_rules(), unit=unit,
+                  max_liability=round(unit + 0.01, 2), simulate=simulate, market_start=row.get("start"), bet_ids=row["bet_ids"],
+                  mode="alert" if body.mode == "alert" else "auto")
+    warnings = [f"Adopted from your Betfair account: {row['side']} {row['runner_name']} £{row['size']:.2f} at {row['avg_price']:.2f} (risk £{risk:.2f})."]
+    if body.strategy == "lay_under25_staged":
+        warnings.append(f"Staged plan: the second half (up to £{unit - risk:.2f} more liability) goes on at 15' if still 0-0. Set the plan stake to your current risk to switch that off.")
+    if rt.betfair.health.delayed:
+        warnings.append("Delayed application key: hedges find the real price through Betfair's order replies; alert mode lets you Cash Out at live prices.")
+    return job, warnings
+
+
+@app.post("/api/autotrade/preview_bet")
+def autotrade_preview_bet(body: BetIn):
+    job, warnings = _job_for_bet(body)
+    return {"job": _job_view(job), "warnings": warnings, "simulate": job.simulate, "delayed": bool(rt.betfair and rt.betfair.health.delayed)}
+
+
+@app.post("/api/autotrade/arm_bet")
+def autotrade_arm_bet(body: BetIn):
+    if not body.confirm:
+        raise HTTPException(400, "Arming needs your confirmation.")
+    job, warnings = _job_for_bet(body)
+    job = autotrader.arm(job)
+    return {"ok": True, "job": _job_view(job), "warnings": warnings}
 
 
 @app.get("/api/autotrade")

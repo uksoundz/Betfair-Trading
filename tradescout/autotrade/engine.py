@@ -237,7 +237,7 @@ class AutoTrader:
         if statuses <= {"CLOSED"}:
             self._finish(j, "done", "The market has closed (match over); nothing more to do.")
             return False
-        orders = [] if j.simulate else [o for o in bf.current_orders(mids) if str(o.get("betId")) in set(map(str, j.bet_ids))]
+        orders = [] if j.simulate else [o for o in self._orders(bf, mids) if str(o.get("betId")) in set(map(str, j.bet_ids))]
         exps = [self._exposure(j, i, orders) for i in range(len(j.legs))]
         j.exposure = {str(i): e.to_dict() for i, e in enumerate(exps)}
         if not inplay:
@@ -265,7 +265,7 @@ class AutoTrader:
             return self._run_rules(bf, j, state, books, exps)
         finally:
             if (j.orders_sent, len(j.sim_bets)) != sent_before:  # show the position after what was just done
-                after = [] if j.simulate else [o for o in bf.current_orders(mids) if str(o.get("betId")) in set(map(str, j.bet_ids))]
+                after = [] if j.simulate else [o for o in self._orders(bf, mids) if str(o.get("betId")) in set(map(str, j.bet_ids))]
                 j.exposure = {str(i): self._exposure(j, i, after).to_dict() for i in range(len(j.legs))}
 
     def _run_rules(self, bf, j: Job, state: dict, books: dict, exps: list) -> bool:
@@ -307,6 +307,12 @@ class AutoTrader:
         return True
 
     # ------------------------------------------------------------------ helpers
+    @staticmethod
+    def _orders(bf, mids: list[str]) -> list[dict]:
+        """All the account's orders on these markets (bets placed on the website included); the job then
+        keeps only its own bet ids."""
+        return bf.my_orders(mids) if hasattr(bf, "my_orders") else bf.current_orders(mids)
+
     def _exposure(self, j: Job, i: int, orders: list[dict]) -> P.Exposure:
         leg = j.legs[i]
         if j.simulate:
@@ -539,7 +545,7 @@ class AutoTrader:
                 return j
             mids = sorted({l["market_id"] for l in j.legs})
             books = bf.books(mids)
-            orders = [] if j.simulate else [o for o in bf.current_orders(mids) if str(o.get("betId")) in set(map(str, j.bet_ids))]
+            orders = [] if j.simulate else [o for o in self._orders(bf, mids) if str(o.get("betId")) in set(map(str, j.bet_ids))]
             exps = [self._exposure(j, i, orders) for i in range(len(j.legs))]
             for i in ([leg] if leg is not None else range(len(j.legs))):
                 outcome, msg = self._act(bf, j, {"a": "green", "leg": i}, books, exps, f"manual{i}")

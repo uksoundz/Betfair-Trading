@@ -18,6 +18,11 @@ class LayZeroZero(Strategy):
     needs_prices = ("correct_scores",)
     settlement = "approximate"
 
+    def trade_rules(self) -> list[dict]:
+        """The plan's in-play steps as rules for armed auto-trading (independent of today's prices)."""
+        return [R.rule("first_goal", R.goals_at_least(1), R.hold(), "First goal: the 0-0 lay has won. Nothing to do.", final=True),
+                                     R.rule("stop70", R.all_of(R.minute_at_least(EXIT_MINUTE), R.goals_at_most(0)), R.green(0), "Still 0-0 on 70': back 0-0 to cap the loss.", final=True)]
+
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         p00 = fc.p_cs.get("0-0", 0.0)
         if p00 > 0.12:
@@ -43,8 +48,7 @@ class LayZeroZero(Strategy):
         return StrategyResult("Correct Score", "lay", "0-0", hit, 1 / p00, prices.correct_scores.get("0-0") if is_market else None,
                               edge, scenarios, plan, rationale,
                               orders=[OrderLeg("CORRECT_SCORE", "0-0", "lay", round(price, 1), 1.0, "liability", "lay 0-0 pre-match", p_model=p00)],
-                              rules=[R.rule("first_goal", R.goals_at_least(1), R.hold(), "First goal: the 0-0 lay has won. Nothing to do.", final=True),
-                                     R.rule("stop70", R.all_of(R.minute_at_least(EXIT_MINUTE), R.goals_at_most(0)), R.green(0), "Still 0-0 on 70': back 0-0 to cap the loss.", final=True)])
+                              rules=self.trade_rules())
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p00 = fc.p_cs.get("0-0", 0.0)

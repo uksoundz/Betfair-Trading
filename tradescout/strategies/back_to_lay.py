@@ -19,6 +19,11 @@ class BackToLayFavourite(Strategy):
     settlement = "approximate"
     enabled_default = False  # negative model-synthetic ROI in both backtest seasons
 
+    def trade_rules(self) -> list[dict]:
+        """The plan's in-play steps as rules for armed auto-trading (independent of today's prices)."""
+        return [R.rule("first_goal", R.goals_at_least(1), R.green(0), "First goal, either side: lay the favourite to lock the profit or cap the loss.", final=True),
+                                     R.rule("stop60", R.all_of(R.minute_at_least(EXIT_MINUTE), R.goals_at_most(0)), R.green(0), "Still 0-0 on 60': lay the favourite and exit.", final=True)]
+
     def evaluate(self, fc: MatchForecast, prices: MarketPrices) -> StrategyResult | None:
         fav_home = fc.favourite == "home"
         p_fav = fc.p_home if fav_home else fc.p_away
@@ -56,8 +61,7 @@ class BackToLayFavourite(Strategy):
         return StrategyResult("Match Odds", "back", fav_name, hit, 1 / p_fav, mkt if is_market else None, edge,
                               scenarios, plan, rationale,
                               orders=[OrderLeg("MATCH_ODDS", "home" if fav_home else "away", "back", round(price, 2), 1.0, "stake", "back the favourite pre-match", p_model=p_fav)],
-                              rules=[R.rule("first_goal", R.goals_at_least(1), R.green(0), "First goal, either side: lay the favourite to lock the profit or cap the loss.", final=True),
-                                     R.rule("stop60", R.all_of(R.minute_at_least(EXIT_MINUTE), R.goals_at_most(0)), R.green(0), "Still 0-0 on 60': lay the favourite and exit.", final=True)])
+                              rules=self.trade_rules())
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         fav_home = fc.favourite == "home"

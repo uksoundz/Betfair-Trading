@@ -137,8 +137,14 @@ Every plan says what to do in play: green up after the first goal, close if it i
 minutes, add the second half of a staged lay on 15 minutes, and so on. TradeScout can carry those
 steps out for you, but only for a plan you have placed yourself and then armed.
 
-1. Settings > Betting: tick **Allow auto-trading of plans I arm** and Save. Off by default.
-2. Place a plan as usual. In the confirmation, or later in My picks, press **Auto-trade**.
+1. Settings > Betting: tick **Allow auto-trading of plans I arm** and press that card's **Save**. Off
+   by default.
+2. Either place a plan through TradeScout's bet slip and press **Auto-trade…** (in the placement
+   confirmation, on the plan in Matches, or next to it in My picks), or, for a bet you placed on the
+   Betfair website or app, go to My picks and press **Auto-trade a bet I placed on Betfair…**. That
+   lists the matched bets on your account with the plans each can follow (a lay of the draw can follow
+   Lay the Draw, a back of Over 2.5 the Over 2.5 free-bet rule, and so on); pick one and press
+   **Set up…**. Unmatched bets appear once they are matched.
 3. The window lists exactly what will happen, in words, for that plan. Tick **Simulate only** to
    watch it run on live prices without sending anything (a good first step). Tick the confirmation
    and press **Arm**.

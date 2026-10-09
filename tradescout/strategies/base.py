@@ -137,6 +137,10 @@ class Strategy:
         raise NotImplementedError
 
     # ----- helpers shared by concrete strategies -------------------------------------------
+    def trade_rules(self) -> list[dict]:
+        """In-play steps as machine rules (autotrade.rules). Empty: the plan is not automated."""
+        return []
+
     @staticmethod
     def price_or_fair(market_price: Optional[float], p: float, side: str = "back") -> tuple[float, bool]:
         """Use the exchange price when we have it, else the model's fair price shaded *against* the

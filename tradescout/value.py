@@ -179,7 +179,8 @@ def assess(p_model: float, side: str, quote: Optional[Quote], limit_price: Optio
     decision = "TRADE"
     if ev_cons < min_edge:
         decision = "NO TRADE"
-        reasons.append(f"Conservative net edge {ev_cons:+.1%} per unit risked is below the {min_edge:.1%} threshold after {commission:.0%} commission.")
+        prec = 2 if (abs(ev_cons) < 0.01 or min_edge < 0.01) else 1
+        reasons.append(f"Conservative net edge {ev_cons:+.{prec}%} per unit risked is below the {min_edge:.{prec}%} threshold after {commission:.0%} commission.")
     if spread_unreliable:
         decision = "NO TRADE"
         reasons.append(("No reliable exchange price yet: offers on one side only (the market is empty)" if one_sided else

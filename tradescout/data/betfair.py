@@ -731,6 +731,25 @@ class BetfairPrices:
             params["marketIds"] = market_ids
         return (self._rpc("listCurrentOrders", params) or {}).get("currentOrders", [])
 
+    def my_orders(self, market_ids: list[str] | None = None) -> list[dict]:
+        """Every current (unsettled) order on the account, however it was placed (website, app, this tool)."""
+        params: dict = {"orderProjection": "ALL", "fromRecord": 0, "recordCount": 1000}
+        if market_ids:
+            params["marketIds"] = market_ids
+        return (self._rpc("listCurrentOrders", params) or {}).get("currentOrders", [])
+
+    def markets_by_id(self, market_ids: list[str]) -> dict[str, dict]:
+        """Catalogue rows (event, event type, runners, type, start) for market ids, within the request budget."""
+        out: dict[str, dict] = {}
+        ids = [m for m in dict.fromkeys(market_ids) if m]
+        for i in range(0, len(ids), 50):
+            chunk = ids[i:i + 50]
+            rows = self._rpc("listMarketCatalogue", {"filter": {"marketIds": chunk}, "maxResults": min(200, len(chunk) + 5),
+                                                    "marketProjection": ["EVENT", "EVENT_TYPE", "MARKET_DESCRIPTION", "RUNNER_DESCRIPTION", "MARKET_START_TIME"]}) or []
+            for c in rows:
+                out[c["marketId"]] = c
+        return out
+
     def cancel_orders(self, market_id: str, bet_ids: list[str] | None = None) -> dict:
         """Cancel unmatched orders on a market (all of them when bet_ids is None)."""
         params: dict = {"marketId": market_id}
