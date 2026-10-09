@@ -106,6 +106,8 @@ class Settings:
     # off = review only, paper = record slips in the journal, live = send orders to Betfair after the user confirms on screen
     betting_mode: str = field(default_factory=lambda: os.getenv("TRADESCOUT_BETTING_MODE", "off"))
     daily_cap: float = field(default_factory=lambda: float(os.getenv("TRADESCOUT_DAILY_CAP", "50")))
+    # allow the auto-trader to follow the in-play rules of plans the user has placed and armed (off by default)
+    autotrade: bool = field(default_factory=lambda: os.getenv("TRADESCOUT_AUTOTRADE", "0").lower() in ("1", "true", "yes", "on"))
 
     @property
     def has_live_fixtures(self) -> bool:

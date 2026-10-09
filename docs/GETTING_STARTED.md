@@ -131,6 +131,41 @@ With Betfair connected:
 
 ---
 
+## Auto-trading a plan you have placed (optional)
+
+Every plan says what to do in play: green up after the first goal, close if it is still 0-0 on 70
+minutes, add the second half of a staged lay on 15 minutes, and so on. TradeScout can carry those
+steps out for you, but only for a plan you have placed yourself and then armed.
+
+1. Settings > Betting: tick **Allow auto-trading of plans I arm** and Save. Off by default.
+2. Place a plan as usual. In the confirmation, or later in My picks, press **Auto-trade**.
+3. The window lists exactly what will happen, in words, for that plan. Tick **Simulate only** to
+   watch it run on live prices without sending anything (a good first step). Tick the confirmation
+   and press **Arm**.
+4. From kick-off, TradeScout checks the match every few seconds: the minute and score from Betfair's
+   live scoreboard, the prices, and your matched bets on that plan. When a step's condition is met it
+   places the order. The Auto-trading panel in My picks shows the state, your position (what you win
+   or lose either way), which steps have run, and a log.
+5. **Green up now**, **Disarm** and **Stop all auto-trading** are always available. Disarming leaves
+   your position on Betfair exactly as it is.
+
+Safety rules it always follows:
+
+* A green up or free bet can only raise your worst case, never lower it.
+* The only step that adds risk is a scale-in, and it never takes the plan above its own stake, counts
+  against your daily cap, and never fires when the score is unknown.
+* Nothing is sent while a market is suspended (after a goal). A wide spread is waited out for up to a
+  minute. Unmatched in-play orders are cancelled after 15 seconds and the hedge is recomputed.
+* If the live score is unavailable, steps triggered by goals wait, but the protective stops on the
+  clock (for example "still 0-0 on 70 minutes: close") still happen.
+* It only acts while TradeScout is open and the computer is awake. If you close it, your position
+  simply runs to the result on Betfair.
+
+Plans whose in-play steps need judgement or data the app does not have (the correct-score basket,
+laying the favourite on a break of serve) cannot be armed; trade those by hand.
+
+---
+
 ## Which accounts you need
 
 | Account | Cost | Needed for |

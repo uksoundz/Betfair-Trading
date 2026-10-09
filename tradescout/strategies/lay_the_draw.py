@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
 from ..model.inplay import exit_profit_lay, fair_price
+from ..autotrade import rules as R
 from .base import OrderLeg, Scenario, Strategy, StrategyResult, entry, exit_, inplay, stop
 
 EXIT_MINUTE = 70.0
@@ -55,7 +56,9 @@ class LayTheDraw(Strategy):
             warnings.append("Evenly matched sides: equaliser risk is high, consider the 1-1 insurance variant")
         return StrategyResult("Match Odds", "lay", "The Draw", hit, 1 / fc.p_draw, prices.draw if is_market else None, edge,
                               scenarios, plan, rationale, warnings,
-                              orders=[OrderLeg("MATCH_ODDS", "draw", "lay", round(price, 2), 1.0, "liability", "lay the draw pre-match", p_model=fc.p_draw)])
+                              orders=[OrderLeg("MATCH_ODDS", "draw", "lay", round(price, 2), 1.0, "liability", "lay the draw pre-match", p_model=fc.p_draw)],
+                              rules=[R.rule("first_goal", R.goals_at_least(1), R.green(0), "First goal, either side: back the draw to green up (profit if the favourite scored, small loss if the underdog did).", final=True),
+                                     R.rule("stop70", R.all_of(R.minute_at_least(EXIT_MINUTE), R.goals_at_most(0)), R.green(0), "Still 0-0 on 70': back the draw and close.", final=True)])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         price, _ = self.price_or_fair(None, fc.p_draw, "lay")

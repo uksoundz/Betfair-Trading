@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
+from ..autotrade import rules as R
 from .base import OrderLeg, Scenario, Strategy, StrategyResult, entry, exit_, inplay, note, stop
 
 BASKET_SIZE = 5
@@ -50,7 +51,8 @@ class CorrectScoreBasket(Strategy):
         ]
         return StrategyResult("Correct Score", "back", legs[0][0], covered, 1 / legs[0][1],
                               prices.correct_scores.get(legs[0][0]) if any_market else None, edge, scenarios, plan, rationale,
-                              orders=[OrderLeg("CORRECT_SCORE", s, "back", round(pr, 1), (1 / pr) / book, "stake", f"{p:.0%} model", p_model=p) for s, p, pr in legs])
+                              orders=[OrderLeg("CORRECT_SCORE", s, "back", round(pr, 1), (1 / pr) / book, "stake", f"{p:.0%} model", p_model=p) for s, p, pr in legs],
+                              rules=[])  # basket rebalancing after goals is a judgement call: not automated
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         ranked = sorted(fc.p_cs.items(), key=lambda kv: -kv[1])[:BASKET_SIZE]

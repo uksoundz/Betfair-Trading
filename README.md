@@ -13,6 +13,9 @@ and ranks what is left. Most ideas end as **NO TRADE**. That is the point.
 * Decision support first. Order placement exists behind an off-by-default switch, a confirmation
   step, a daily cap and exposure limits. TRADE ideas place directly; anything else needs an
   explicit, logged override on the slip. Nothing is ever sent without a confirmation click.
+* Optional auto-trading of plans you have placed and explicitly armed: the engine follows the plan's
+  in-play rules (green up, close at the stop, scale in, free bet) from Betfair's live score and prices,
+  with hedges that can only reduce the worst case, a simulate mode, and disarm / stop-all controls.
 * The price feed explains itself: how many fixtures the exchange priced, which could not be matched
   to an exchange event and the nearest names, which are in play or suspended, session and key
   state. Sessions renew themselves; prices refresh every minute while the app is open.
@@ -28,7 +31,7 @@ tradescout scan --date 2025-11-08   # football replay in the terminal
 tradescout scan --sport tennis --date 2025-06-02
 tradescout betfair-check            # Betfair login test and, per fixture, the exchange event matched or why not
 tradescout holdout                  # out-of-sample protocol for both sports (writes data/strategy_stats.json)
-pytest                              # 234 tests (incl. the Betfair client, routes and placement against a local stand-in exchange)
+pytest                              # 253 tests (incl. the Betfair client, routes, placement and auto-trading against a local stand-in exchange)
 ```
 
 Windows: `install.bat` then `app.bat`.
@@ -128,6 +131,7 @@ tradescout/
   eval/         walk-forward evaluation, holdout protocol, trade statistics
   backtest/     football walk-forward backtester
   betting.py    bet slip, tick ladder, placement (live mode only)
+  autotrade/    in-play rules, position and green-up maths, live score feed, the auto-trading engine
   signals.py    append-only log of every idea shown with the prices seen
   journal.py    tracked picks, settled against results
   data/         openfootball, football-data.org, Betfair (football and tennis), scored team-name matching

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
 from ..model.inplay import exit_profit_lay, fair_price
+from ..autotrade import rules as R
 from .base import OrderLeg, Scenario, Strategy, StrategyResult, entry, exit_, inplay, note, stop
 
 
@@ -52,7 +53,9 @@ class BackOversWithInsurance(Strategy):
         return StrategyResult("Over/Under 2.5", "back", "Over 2.5", hit, 1 / p_over, prices.over_25 if o_market else None, edge,
                               scenarios, plan, rationale, warnings,
                               orders=[OrderLeg("OVER_UNDER_25", "Over 2.5 Goals", "back", round(o_price, 2), w_over, "stake", "main leg", p_model=p_over),
-                                      OrderLeg("CORRECT_SCORE", "1-1", "back", round(c_price, 2), w_ins, "stake", "insurance leg", p_model=p11)])
+                                      OrderLeg("CORRECT_SCORE", "1-1", "back", round(c_price, 2), w_ins, "stake", "insurance leg", p_model=p11)],
+                              rules=[R.rule("early_goal", R.all_of(R.goals_at_least(1), R.minute_before(20)), R.free_bet(0),
+                                            "A goal before 20': lay Over 2.5 for the original stake, leaving a free bet. The 1-1 keeps running.")])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p_over = fc.p_over[2.5]
@@ -113,7 +116,11 @@ class LayUndersStaged(Strategy):
         return StrategyResult("Over/Under 2.5", "lay", "Under 2.5", hit, 1 / p_under, prices.under_25 if is_market else None, edge,
                               scenarios, plan, rationale,
                               orders=[OrderLeg("OVER_UNDER_25", "Under 2.5 Goals", "lay", round(u0, 2), 0.5, "liability",
-                                               "first half of the liability; the second half goes on in play at 15 minutes if still 0-0", p_model=p_under)])
+                                               "first half of the liability; the second half goes on in play at 15 minutes if still 0-0", p_model=p_under)],
+                              rules=[R.rule("scale15", R.all_of(R.minute_at_least(15), R.minute_before(25), R.goals_at_most(0), R.price_not_worse_than_entry(0)), R.scale_in(0, 0.5),
+                                            "On 15' if still 0-0 and the Under price has shortened or held: lay Under 2.5 with the second half of the liability."),
+                                     R.rule("second_goal", R.goals_at_least(2), R.green(0), "Second goal: back Under 2.5 to lock in the profit.", final=True),
+                                     R.rule("stop70", R.all_of(R.minute_at_least(70), R.goals_at_most(0)), R.green(0), "Still 0-0 on 70': back Under 2.5 and close.", final=True)])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p_under = 1 - fc.p_over[2.5]

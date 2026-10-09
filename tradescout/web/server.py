@@ -18,6 +18,7 @@ GET  /api/journal  POST /api/journal  DELETE /api/journal/{id}  POST /api/journa
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from dataclasses import asdict
@@ -174,6 +175,32 @@ class Runtime:
 app = FastAPI(title="TradeScout")
 rt = Runtime()
 journal = Journal()
+
+
+# ----------------------------------------------------------------------------------- auto-trading
+from ..autotrade.engine import AutoTrader, new_job  # noqa: E402
+from ..autotrade import rules as RULES  # noqa: E402
+
+AUTOTRADE_PATH = Path(os.getenv("TRADESCOUT_AUTOTRADE_PATH", str(REPO_ROOT / "data" / "autotrade.json")))
+
+
+def _can_commit(amount: float) -> Optional[str]:
+    if journal.committed_today("live") + amount > settings.daily_cap + 1e-9:
+        return f"the daily cap of £{settings.daily_cap:.2f} would be exceeded."
+    return None
+
+
+def _autotrade_done(job) -> None:
+    for e in journal.entries:
+        if e.id == job.entry_id:
+            e.note = (e.note + "; " if e.note else "") + f"auto-trade {job.state}: {job.status}"
+            journal.save()
+            break
+
+
+autotrader = AutoTrader(lambda: rt.betfair, AUTOTRADE_PATH, jurisdiction=lambda: settings.betfair_jurisdiction,
+                        can_commit=_can_commit, on_done=_autotrade_done)
+autotrader.enabled = lambda: settings.autotrade and settings.betting_mode in ("live", "paper")
 
 
 # ----------------------------------------------------------------------------------- helpers
@@ -336,6 +363,7 @@ def status():
         "sports": SPORTS, "live_fixtures": rt.live_fixtures, "tennis_live": rt.tennis_live,
         "betfair": rt.betfair_ok, "betfair_error": rt.betfair_error, "betfair_configured": rt.betfair_configured, "betfair_state": bf,
         "betfair_delayed": bf.get("delayed"), "auto_refresh_seconds": AUTO_REFRESH_SECONDS if rt.betfair_configured else None,
+        "autotrade": {"enabled": settings.autotrade, "active": len(autotrader.active()), "live": sum(1 for j in autotrader.active() if j.state == "live")},
         "bank": settings.bank, "kelly_fraction": settings.kelly_fraction, "seasons": rt.sample.available_seasons(),
         "leagues": {"football": leagues_fb, "tennis": {k: LEAGUE_NAMES[k] for k in TENNIS_LEAGUES}},
         "today": date.today().isoformat(), "live_results": rt.results.status, "journal": journal.summary(),
@@ -493,6 +521,7 @@ class SettingsIn(BaseModel):
     commission: Optional[float] = None
     min_edge: Optional[float] = None
     model_weight_scale: Optional[float] = None
+    autotrade: Optional[bool] = None
     enabled_strategies: Optional[list[str]] = None
     clear_football: bool = False
     clear_betfair: bool = False
@@ -510,6 +539,7 @@ def get_settings():
         "bank": settings.bank, "kelly_fraction": settings.kelly_fraction,
         "betting_mode": settings.betting_mode, "daily_cap": settings.daily_cap, "committed_today": journal.committed_today("live"),
         "commission": settings.commission, "min_edge": settings.min_edge, "max_spread": settings.max_spread, "model_weight_scale": settings.model_weight_scale,
+        "autotrade": settings.autotrade,
         "enabled_strategies": [s.key for s in active_strategies(ALL_STRATEGIES + TENNIS_STRATEGIES)],
         "env_path": str(Path(settings.cache_dir).parent / ".env"),
     }
@@ -552,6 +582,10 @@ def post_settings(body: SettingsIn):
         values["TRADESCOUT_COMMISSION"] = str(body.commission)
     if body.min_edge is not None and 0 <= body.min_edge <= 0.5:
         values["TRADESCOUT_MIN_EDGE"] = str(body.min_edge)
+    if body.autotrade is not None:
+        values["TRADESCOUT_AUTOTRADE"] = "1" if body.autotrade else "0"
+        if not body.autotrade:
+            autotrader.stop_all()
     if body.model_weight_scale is not None and 0.5 <= body.model_weight_scale <= 3:
         values["TRADESCOUT_MODEL_WEIGHT_SCALE"] = str(body.model_weight_scale)
     if body.enabled_strategies is not None:
@@ -735,14 +769,17 @@ def betslip_place(body: PlaceIn):
     override = gate["override_needed"]
     ref = customer_ref(body.date, body.match_id, body.strategy, sport, round(stake, 2))
     result = place_slip(slip, client, ref, settings.daily_cap, journal.committed_today("live"))
+    entry_id = None
     if result.ok or result.pending:
         why = [r.split(":")[0] for r in gate["place_block_reasons"]] if override else []
         note = "placed on Betfair" + (f" (override: {'; '.join(why)})" if override else "") + (" (unconfirmed line, check open orders)" if result.pending else "")
         e = journal.add(idea, stake, note=note)
         e.sport = sport
         journal.attach_slip(e.id, [asdict(l) for l in slip.lines], placed="live", refs=result.bet_ids, total=result.committed, note=note, stake_money=stake)
+        entry_id = e.id
         rt.cache.pop(f"{sport}:{body.date}", None)
-    return {"ok": result.ok, "result": result.to_dict(), "slip": slip.to_dict(), "summary": journal.summary(), "override": override,
+    return {"ok": result.ok, "result": result.to_dict(), "slip": slip.to_dict(), "summary": journal.summary(), "override": override, "entry_id": entry_id,
+            "can_autotrade": bool(idea.rules),
             "committed_today": journal.committed_today("live"), "daily_cap": settings.daily_cap}
 
 
@@ -788,6 +825,141 @@ def betslip_paper(body: SlipIn):
     journal.attach_slip(e.id, [asdict(l) for l in slip.lines], note="paper slip", stake_money=stake)
     rt.cache.pop(f"{sport}:{body.date}", None)
     return {"ok": True, "entry": asdict(e), "slip": slip.to_dict(), "summary": journal.summary()}
+
+
+# ----- auto-trading ----------------------------------------------------------------------
+class ArmIn(BaseModel):
+    entry_id: str
+    simulate: bool = False
+    confirm: bool = False
+
+
+def _job_view(j) -> dict:
+    d = asdict(j)
+    names = {"fav": j.home if j.fav == "home" else j.away, "dog": j.away if j.fav == "home" else j.home}
+    d["rules_text"] = [RULES.describe(r, j.legs, names) for r in j.rules]
+    d["fired_text"] = [r["text"] for r in j.rules if r["id"] in j.fired]
+    return d
+
+
+def _job_for_entry(entry_id: str, simulate: bool) -> tuple:
+    """Build (without arming) the auto-trade job for a journal entry, or raise with the reason."""
+    e = next((x for x in journal.entries if x.id == entry_id), None)
+    if e is None:
+        raise HTTPException(404, "That pick is not in My picks.")
+    rules = list(e.rules or [])
+    fav = e.fav or "home"
+    if not rules:
+        strat = get_strategy(e.strategy)
+        rules = []
+        try:
+            from ..models import Fixture as _Fx, MarketPrices as _MP
+            scout = rt.scout_for(e.sport or "football")
+            fx = _Fx(date.fromisoformat(e.date), e.league, e.home, e.away)
+            fc = scout.forecaster(fx.date).forecast(fx)
+            r = strat.evaluate(fc, _MP())
+            rules = list(getattr(r, "rules", []) or []) if r else []
+            fav = getattr(fc, "favourite", None) or ("home" if getattr(fc, "p_a", 0.5) >= 0.5 else "away")
+        except Exception:
+            rules = []
+    if not rules:
+        raise HTTPException(400, f"{e.strategy_label}: this plan's in-play steps are not automated (they need a judgement call or data the app does not have). Trade it by hand.")
+    legs = []
+    for l in e.slip or []:
+        if not l.get("market_id") or not l.get("selection_id"):
+            continue
+        legs.append({"market": l["market"], "market_label": l.get("market_label"), "market_id": l["market_id"], "selection": l["selection"],
+                     "selection_id": l["selection_id"], "handicap": float(l.get("handicap") or 0.0), "side": l["side"], "entry_price": l["plan_price"],
+                     "size": l["size"], "runner_name": l.get("runner_name")})
+    if not legs:
+        raise HTTPException(400, "This pick has no exchange markets on record. Place it through the bet slip (live, or paper with Betfair connected) first.")
+    if simulate or e.placed != "live":
+        if rt.betfair is None:
+            raise HTTPException(400, "Simulation needs live prices: connect Betfair in Settings.")
+        simulate = True
+    else:
+        if settings.betting_mode != "live":
+            raise HTTPException(403, "Betting mode is not Live; arm it in simulate mode or switch to Live in Settings.")
+        if not rt.betfair_ok:
+            raise HTTPException(400, "Betfair is not connected.")
+    if not settings.autotrade:
+        raise HTTPException(403, "Auto-trading is switched off. Turn it on in Settings > Betting first.")
+    names = {"fav": e.home if fav == "home" else e.away, "dog": e.away if fav == "home" else e.home}
+    event_id, market_start = None, None
+    try:
+        fx = next((f for f in rt.fixture_cache.get(f"{e.sport or 'football'}:{e.date}", []) if f.home == e.home and f.away == e.away), None)
+        if fx is not None and hasattr(rt.betfair, "match_fixture") and (e.sport or "football") == "football":
+            m = rt.betfair.match_fixture(fx)
+            event_id = m.event_id
+        elif fx is not None and str(fx.fixture_id or "").startswith("bf:"):
+            event_id = str(fx.fixture_id)[3:]
+        if event_id:
+            for c in rt.betfair.catalogue([event_id]).get(event_id, []):
+                if c.get("marketId") == legs[0]["market_id"]:
+                    market_start = c.get("marketStartTime")
+    except Exception:
+        pass
+    unit = float(e.stake_money)
+    job = new_job(entry_id=e.id, sport=e.sport or "football", date=e.date, home=e.home, away=e.away, fav=fav, strategy=e.strategy,
+                  strategy_label=e.strategy_label, event_id=event_id, legs=legs, rules=rules, unit=unit,
+                  max_liability=round(unit * 1.0 + 0.01, 2), simulate=simulate, market_start=market_start,
+                  bet_ids=list(e.bet_refs or []))
+    warnings = []
+    if not event_id:
+        warnings.append("The exchange event could not be identified, so there is no live score: only rules on the clock and prices can fire.")
+    if e.decision and e.decision != "TRADE":
+        warnings.append(f"The app's decision on this pick was {e.decision}; you placed it as an override.")
+    return job, names, warnings
+
+
+@app.get("/api/autotrade")
+def autotrade_list():
+    jobs = sorted(autotrader.jobs.values(), key=lambda j: j.created, reverse=True)
+    return {"enabled": settings.autotrade, "betting_mode": settings.betting_mode, "running": bool(autotrader._thread and autotrader._thread.is_alive()),
+            "last_tick": autotrader.last_tick, "score_feed_error": autotrader.scores.last_error, "jobs": [_job_view(j) for j in jobs[:50]]}
+
+
+@app.post("/api/autotrade/preview")
+def autotrade_preview(body: ArmIn):
+    job, names, warnings = _job_for_entry(body.entry_id, body.simulate)
+    return {"job": _job_view(job), "warnings": warnings, "simulate": job.simulate}
+
+
+@app.post("/api/autotrade/arm")
+def autotrade_arm(body: ArmIn):
+    if not body.confirm:
+        raise HTTPException(400, "Arming needs your confirmation.")
+    job, names, warnings = _job_for_entry(body.entry_id, body.simulate)
+    job = autotrader.arm(job)
+    return {"ok": True, "job": _job_view(job), "warnings": warnings}
+
+
+class JobIn(BaseModel):
+    job_id: str
+    leg: Optional[int] = None
+
+
+@app.post("/api/autotrade/disarm")
+def autotrade_disarm(body: JobIn):
+    j = autotrader.disarm(body.job_id)
+    if j is None:
+        raise HTTPException(404, "No such auto-trade.")
+    return {"ok": True, "job": _job_view(j)}
+
+
+@app.post("/api/autotrade/green")
+def autotrade_green(body: JobIn):
+    if rt.betfair is None:
+        raise HTTPException(400, "Betfair is not connected.")
+    j = autotrader.green_now(body.job_id, body.leg)
+    if j is None:
+        raise HTTPException(404, "No such auto-trade.")
+    return {"ok": True, "job": _job_view(j)}
+
+
+@app.post("/api/autotrade/stop_all")
+def autotrade_stop_all():
+    return {"ok": True, "stopped": autotrader.stop_all()}
 
 
 # ----- journal -------------------------------------------------------------------------
@@ -881,4 +1053,7 @@ def run(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) ->
     print("=" * 64, flush=True)
     if open_browser:
         threading.Thread(target=_open_when_ready, args=(url, host, port), daemon=True).start()
+    if autotrader.active():
+        autotrader.start()
+        print(f"  Auto-trading: {len(autotrader.active())} armed plan(s) resumed.", flush=True)
     uvicorn.run(app, host=host, port=port, log_level="warning")

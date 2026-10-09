@@ -56,10 +56,14 @@ async function init() {
   $('#saveBetting').onclick = () => {
     const mode = $('#betMode').value;
     if (mode === 'live' && !confirm('Live mode lets the Bet slip send real orders to Betfair after you press a confirmation button. Ideas the app marks TRADE place directly; anything else needs your explicit override on the slip. Turn it on?')) { $('#betMode').value = status.betting_mode || 'off'; return; }
-    saveSettings({ betting_mode: mode, daily_cap: +$('#dailyCap').value }, '#bettingResult');
+    const auto = $('#autotradeOn').checked;
+    if (auto && !status.autotrade?.enabled && !confirm('Allow auto-trading? TradeScout will only act on plans you place and then arm one by one, following the in-play rules shown when you arm them. You can disarm any plan or stop everything at any time.')) { $('#autotradeOn').checked = false; return; }
+    saveSettings({ betting_mode: mode, daily_cap: +$('#dailyCap').value, autotrade: auto }, '#bettingResult');
   };
   $('#saveStrats').onclick = () => saveSettings({ enabled_strategies: [...document.querySelectorAll('#stratToggles input:checked')].map(i => i.value) }, '#stratResult');
   $('#openBetsBtn').onclick = loadOpenBets;
+  $('#autoRefreshBtn').onclick = loadAutotrade;
+  $('#autoStopAll').onclick = async () => { if (!confirm('Stop all auto-trading now? Your positions stay exactly as they are on Betfair.')) return; try { const r = await post('/api/autotrade/stop_all'); toast(`${r.stopped} auto-trade(s) stopped.`); loadAutotrade(); loadStatus(); } catch (e) { toast('Stop failed: ' + e.message, 6000); } };
   $('#modal').onclick = (ev) => { if (ev.target.id === 'modal') $('#modal').hidden = true; };
   document.addEventListener('visibilitychange', () => { if (!document.hidden && nextRefreshAt && Date.now() >= nextRefreshAt) silentRefresh(); });
   await setSport('football');
@@ -94,6 +98,7 @@ function renderPills() {
     <span class="pill" data-go="settings" title="Click to set up"><span class="dot ${live ? 'on' : ''}"></span>${live ? 'Live fixtures' : (sport === 'tennis' ? 'Replay data (connect Betfair for live tennis)' : 'Built-in fixtures only')}</span>
     <span class="pill" data-feed="1" title="Click for the price feed details"><span class="dot ${bfDot}"></span>${esc(bfText)}</span>
     <span class="pill" data-go="settings" title="Betting mode"><span class="dot ${status.betting_mode === 'live' ? 'warn' : status.betting_mode === 'paper' ? 'on' : ''}"></span>${status.betting_mode === 'live' ? 'LIVE betting on' : status.betting_mode === 'paper' ? 'Paper betting' : 'Betting off'}</span>
+    ${status.autotrade && status.autotrade.active ? `<span class="pill" data-go="journal" title="Armed auto-trades"><span class="dot ${status.autotrade.live ? 'warn' : 'on'}"></span>Auto-trading: ${status.autotrade.active} armed${status.autotrade.live ? ', ' + status.autotrade.live + ' in play' : ''}</span>` : ''}
     <span class="pill" data-go="bankroll"><span class="dot on"></span>Bank £${status.bank} · open risk £${(status.exposure && status.exposure.open_total || 0).toFixed(0)}</span>`;
   document.querySelectorAll('.pill[data-go]').forEach(p => p.onclick = () => showView(p.dataset.go));
   document.querySelectorAll('.pill[data-feed]').forEach(p => p.onclick = () => { if (!bf.configured) { showView('settings'); return; } feedOpen = !feedOpen; renderFeed(); });
@@ -470,7 +475,8 @@ async function openSlip(m, strategy, stake, src) {
           $('#slipConfirm').innerHTML = `<div class="banner ${res.ok ? '' : 'err'}" style="margin-top:10px"><b>${esc(res.message)}</b>
             <table class="sc" style="margin-top:6px"><tr><th>Line</th><th class="n">Price</th><th class="n">Size</th><th>Status</th><th class="n">Matched</th><th>Bet id</th></tr>
             ${res.lines.map(l => `<tr><td>${l.side.toUpperCase()} ${esc(l.runner_name)} (${esc(l.market_label)})</td><td class="n">${l.price.toFixed(2)}</td><td class="n">${money(l.size)}</td><td class="${l.status === 'SUCCESS' ? 'pos' : 'neg'}">${l.status}${l.order_status ? ' · ' + (l.order_status === 'EXECUTION_COMPLETE' ? 'matched' : 'waiting for price') : ''}${l.error ? ' · ' + esc(l.error) : ''}</td><td class="n">${l.size_matched ? money(l.size_matched) : '-'}</td><td class="meta">${l.bet_id || '-'}</td></tr>`).join('')}</table>
-            <div class="row" style="margin-top:8px"><button id="slipDone" class="small">Close</button><button id="slipOrders" class="small ghost">See open orders</button></div></div>`;
+            <div class="row" style="margin-top:8px"><button id="slipDone" class="small">Close</button><button id="slipOrders" class="small ghost">See open orders</button>${res.ok && r.entry_id && r.can_autotrade ? '<button id="slipAuto" class="small primary">Auto-trade this plan…</button>' : ''}</div></div>`;
+          if ($('#slipAuto')) $('#slipAuto').onclick = () => openArm(r.entry_id);
           $('#slipDone').onclick = () => { modal.hidden = true; showMatch(m.id, src); };
           $('#slipOrders').onclick = () => { modal.hidden = true; showView('journal'); };
           if (res.ok || res.pending) { const idea = m.ideas.find(x => x.strategy === strategy); if (idea) idea.tracked = true; await loadStatus(); toast(res.ok ? 'Bets placed and logged in My picks.' : 'Check open orders: Betfair did not confirm.', 6000); }
@@ -602,10 +608,11 @@ function renderJournal(j) {
     ${j.entries.map(e => `<tr><td>${e.date}</td><td>${e.sport === 'tennis' ? '🎾 ' : '⚽ '}${esc(e.home)} v ${esc(e.away)}<div class="s meta">${esc(((status.leagues || {})[e.sport] || {})[e.league] || e.league)}</div></td><td>${esc(e.strategy_label)}${e.note && e.note.includes('override') ? ' <span class="evidence" title="placed by you against the app\'s decision">override</span>' : ''}</td>
       <td>${e.decision ? decBadge(e.decision) : '-'}</td><td class="n">${pct(e.hit_prob)}</td><td class="n">${spct(e.ev_conservative)}</td><td class="n">${price(e.entry_price)}</td><td class="n">${money(e.stake_money)}</td>
       <td class="status-${e.status}">${e.status}${e.placed === 'live' ? ' <span class="count">LIVE</span>' : e.placed === 'paper' ? ' <span class="meta">paper</span>' : ''}</td><td>${esc(e.result || '-')}${e.note && e.note.includes('modelled') ? ' <span class="meta" title="in-play exits settled at modelled prices">(modelled)</span>' : ''}</td><td class="n ${e.pnl_money == null ? '' : e.pnl_money >= 0 ? 'pos' : 'neg'}">${e.pnl_money == null ? '-' : money(e.pnl_money)}</td>
-      <td><button class="small ghost danger" data-del="${e.id}" title="Remove">✕</button></td></tr>`).join('')}</table></div>`;
+      <td>${(e.placed === 'live' || e.placed === 'paper') && e.status === 'open' && (e.slip || []).some(l => l.market_id) ? `<button class="small" data-auto="${e.id}" title="Let TradeScout follow this plan's in-play rules">Auto-trade</button>` : ''}<button class="small ghost danger" data-del="${e.id}" title="Remove">✕</button></td></tr>`).join('')}</table></div>`;
   document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/api/journal/' + b.dataset.del, { method: 'DELETE' }); await loadJournal(); await loadStatus(); });
+  document.querySelectorAll('[data-auto]').forEach(b => b.onclick = () => openArm(b.dataset.auto));
 }
-async function loadJournal() { try { renderJournal(await api('/api/journal')); } catch (e) { toast('Could not load picks: ' + e.message); } loadOpenBets(); }
+async function loadJournal() { try { renderJournal(await api('/api/journal')); } catch (e) { toast('Could not load picks: ' + e.message); } loadOpenBets(); loadAutotrade(); }
 async function settleJournal() {
   const b = $('#settleBtn'); b.disabled = true; b.textContent = 'Checking results…';
   try { const r = await post('/api/journal/settle'); renderJournal(r); await loadStatus(); toast(r.settled ? `${r.settled} pick(s) settled.` : 'No new results yet.'); }
@@ -628,6 +635,59 @@ async function loadOpenBets() {
       try { await post('/api/bets/cancel', { market_id: b.dataset.cancel, bet_ids: [b.dataset.bet] }); toast('Cancelled.'); loadOpenBets(); }
       catch (e) { toast('Cancel failed: ' + e.message, 6000); }
     });
+  } catch (e) { el.innerHTML = `<div class="warn">! ${esc(e.message)}</div>`; }
+}
+
+// ---------------- auto-trading
+let autoTimer = null;
+async function openArm(entryId, simulate) {
+  const modal = $('#modal'), card = $('#modalCard'); modal.hidden = false;
+  card.innerHTML = '<div class="spinner">Reading the plan…</div>';
+  try {
+    const p = await post('/api/autotrade/preview', { entry_id: entryId, simulate: !!simulate });
+    const j = p.job;
+    card.innerHTML = `<h2>Auto-trade: ${esc(j.strategy_label)}</h2><div class="meta">${esc(j.home)} v ${esc(j.away)} · ${esc(j.date)} · ${j.simulate ? '<b>SIMULATE</b>: nothing will be sent to Betfair' : '<b class="neg">LIVE</b>: orders go to your Betfair account'}</div>
+      <h3>What TradeScout will do once the match is in play</h3>
+      <ol style="margin:6px 0 6px 18px">${j.rules_text.map(t => `<li>${esc(t)}</li>`).join('')}</ol>
+      <h3>Position it manages</h3>
+      <ul style="margin:6px 0 6px 18px">${j.legs.map(l => `<li>${esc(l.side.toUpperCase())} ${esc(l.runner_name)} (${esc(l.market_label || l.market)}) at ${l.entry_price.toFixed(2)}, £${l.size.toFixed(2)}</li>`).join('')}</ul>
+      <div class="meta">Plan stake £${j.unit.toFixed(2)}; it will never have more than £${j.max_liability.toFixed(2)} at risk. Hedges (green up, free bet) can only raise your worst case. Nothing is sent while a market is suspended. Unmatched in-play orders are cancelled after 15 seconds and recomputed.</div>
+      ${p.warnings.map(w => `<div class="warn">! ${esc(w)}</div>`).join('')}
+      <div class="banner" style="margin-top:10px"><b>Keep TradeScout open</b> (and the computer awake) until the match ends. If the app is closed nothing is done; the position simply runs to the result on Betfair.</div>
+      <label style="display:block;margin-top:8px"><input type="checkbox" id="armSim" ${j.simulate ? 'checked' : ''}> Simulate only (follow the rules on live prices, send nothing)</label>
+      <label style="display:block;margin-top:6px"><input type="checkbox" id="armOk"> I want TradeScout to carry out the steps above for this plan without asking each time.</label>
+      <div class="row" style="margin-top:12px"><button id="armGo" class="primary place" disabled>Arm auto-trading</button><button id="armClose" class="ghost">Cancel</button></div><div id="armOut"></div>`;
+    $('#armClose').onclick = () => modal.hidden = true;
+    $('#armOk').onchange = () => { $('#armGo').disabled = !$('#armOk').checked; };
+    $('#armSim').onchange = () => openArm(entryId, $('#armSim').checked);
+    $('#armGo').onclick = async () => {
+      $('#armGo').disabled = true;
+      try { const r = await post('/api/autotrade/arm', { entry_id: entryId, simulate: $('#armSim').checked, confirm: true }); modal.hidden = true; toast(r.job.simulate ? 'Armed in simulate mode.' : 'Auto-trading armed for this plan.'); await loadStatus(); showView('journal'); }
+      catch (e) { $('#armOut').innerHTML = `<div class="warn">! ${esc(e.message)}</div>`; $('#armGo').disabled = false; }
+    };
+  } catch (e) { card.innerHTML = `<h2>Auto-trade</h2><div class="warn">! ${esc(e.message)}</div><div class="row" style="margin-top:10px">${/switched off/.test(e.message) ? '<button id="armSettings" class="small primary">Open Settings</button>' : ''}<button id="armClose" class="ghost">Close</button></div>`; $('#armClose').onclick = () => modal.hidden = true; if ($('#armSettings')) $('#armSettings').onclick = () => { modal.hidden = true; showView('settings'); }; }
+}
+async function loadAutotrade() {
+  const el = $('#autoJobs'); if (!el) return;
+  clearTimeout(autoTimer);
+  try {
+    const r = await api('/api/autotrade');
+    $('#autoMeta').textContent = (r.enabled ? 'Auto-trading allowed. ' : 'Auto-trading is switched off in Settings > Betting. ') + (r.running ? `Engine running, last check ${hhmm(r.last_tick)} UTC.` : 'Engine idle.') + (r.score_feed_error ? ' Score feed: ' + r.score_feed_error.slice(0, 80) : '');
+    if (!r.jobs.length) { el.innerHTML = '<div class="meta">Nothing armed. Place a plan, then press Auto-trade on it in the table above.</div>'; return; }
+    el.innerHTML = r.jobs.map(j => {
+      const active = j.state === 'armed' || j.state === 'live';
+      const sc = j.score || {};
+      const exp = Object.values(j.exposure || {}).map((e, k) => `${esc(j.legs[k] ? j.legs[k].runner_name : '')}: <b class="${e.win >= 0 ? 'pos' : 'neg'}">${money(e.win)}</b> if it wins / <b class="${e.lose >= 0 ? 'pos' : 'neg'}">${money(e.lose)}</b> if not`).join(' · ');
+      return `<div class="card"><div class="head"><span class="badge-dec ${j.state === 'live' ? 'trade' : active ? 'research' : 'notrade'}">${esc(j.state.toUpperCase())}</span>${j.simulate ? ' <span class="evidence">simulate</span>' : ''} <b>${esc(j.home)} v ${esc(j.away)}</b> · ${esc(j.strategy_label)}
+        ${active ? `<button class="small" data-green="${j.id}">Green up now</button><button class="small ghost danger" data-disarm="${j.id}">Disarm</button>` : ''}</div>
+        <div class="meta">${esc(j.status)}${sc.source ? ' · ' + esc(sc.source) : ''}</div>
+        ${exp ? `<div class="meta">Position: ${exp}</div>` : ''}
+        <ul class="meta" style="margin:4px 0 4px 18px">${j.rules_text.map((t, k) => `<li>${j.fired.includes(j.rules[k].id) ? '✓ ' : ''}${esc(t)}</li>`).join('')}</ul>
+        <details><summary class="meta">Log (${j.log.length})</summary><div class="meta">${j.log.slice().reverse().map(l => `${hhmm(l.ts)} ${esc(l.text)}`).join('<br>')}</div></details></div>`;
+    }).join('');
+    document.querySelectorAll('[data-disarm]').forEach(b => b.onclick = async () => { if (!confirm('Disarm? TradeScout stops acting on this plan; your position stays as it is on Betfair.')) return; await post('/api/autotrade/disarm', { job_id: b.dataset.disarm }); loadAutotrade(); loadStatus(); });
+    document.querySelectorAll('[data-green]').forEach(b => b.onclick = async () => { if (!confirm('Green up now at the best prices on offer?')) return; b.disabled = true; try { const r = await post('/api/autotrade/green', { job_id: b.dataset.green }); toast(r.job.status, 6000); } catch (e) { toast('Green up failed: ' + e.message, 6000); } loadAutotrade(); });
+    if (r.jobs.some(j => j.state === 'armed' || j.state === 'live') && $('#view-journal').classList.contains('active')) autoTimer = setTimeout(loadAutotrade, 5000);
   } catch (e) { el.innerHTML = `<div class="warn">! ${esc(e.message)}</div>`; }
 }
 
@@ -673,7 +733,7 @@ async function loadSettings() {
     $('#bfUser').value = s.betfair_username || ''; $('#bfPass').value = ''; $('#bfPass').placeholder = s.has_betfair_password ? 'saved (type to replace)' : '';
     $('#bfJurisdiction').value = s.betfair_jurisdiction || 'com'; $('#bfCert').value = s.betfair_cert_file || ''; $('#bfKeyFile').value = s.betfair_key_file || '';
     $('#bank').value = s.bank; $('#kelly').value = String(s.kelly_fraction); $('#commission').value = (s.commission * 100).toFixed(1); $('#minEdge').value = (s.min_edge * 100).toFixed(1); $('#modelWeight').value = String(s.model_weight_scale || 1);
-    $('#betMode').value = s.betting_mode || 'off'; $('#dailyCap').value = s.daily_cap;
+    $('#betMode').value = s.betting_mode || 'off'; $('#dailyCap').value = s.daily_cap; $('#autotradeOn').checked = !!s.autotrade;
     const bf = s.betfair || {};
     $('#lightFixtures').className = 'light ' + (status.live_fixtures ? 'on' : ''); $('#lightBetfair').className = 'light ' + (bf.connected ? 'on' : bf.configured ? 'warn' : ''); $('#lightBetting').className = 'light ' + (s.betting_mode === 'live' ? 'on' : '');
     const h = bf.health || {};

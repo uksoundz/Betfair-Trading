@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
 from ..model.inplay import exit_profit_back, fair_price
+from ..autotrade import rules as R
 from .base import OrderLeg, Scenario, Strategy, StrategyResult, entry, exit_, inplay, stop
 
 EXIT_MINUTE = 60.0
@@ -45,7 +46,9 @@ class BackUndersTradeOut(Strategy):
         ]
         return StrategyResult("Over/Under 2.5", "back", "Under 2.5", hit, 1 / p_under, prices.under_25 if is_market else None, edge,
                               scenarios, plan, rationale,
-                              orders=[OrderLeg("OVER_UNDER_25", "Under 2.5 Goals", "back", round(price, 2), 1.0, "stake", "back unders pre-match", p_model=p_under)])
+                              orders=[OrderLeg("OVER_UNDER_25", "Under 2.5 Goals", "back", round(price, 2), 1.0, "stake", "back unders pre-match", p_model=p_under)],
+                              rules=[R.rule("first_goal", R.goals_at_least(1), R.green(0), "First goal: lay Under 2.5 to cut the loss.", final=True),
+                                     R.rule("green60", R.all_of(R.minute_at_least(EXIT_MINUTE), R.goals_at_most(0)), R.green(0), "Still 0-0 on 60': lay Under 2.5 and bank the profit.", final=True)])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p_under = 1 - fc.p_over[2.5]

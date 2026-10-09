@@ -44,6 +44,9 @@ class JournalEntry:
     sport: str = "football"
     decision: str = ""  # TRADE | NO TRADE | RESEARCH at the time it was tracked
     ev_conservative: Optional[float] = None
+    rules: list = field(default_factory=list)  # the plan's in-play rules (for auto-trading)
+    fav: str = ""                              # home | away
+    match_id: str = ""
 
 
 @dataclass
@@ -67,12 +70,15 @@ class Journal:
         fx = idea.fixture
         for e in self.entries:
             if e.date == fx.date.isoformat() and e.home == fx.home and e.away == fx.away and e.strategy == idea.strategy:
+                if not e.rules and getattr(idea, "rules", None):
+                    e.rules, e.fav = list(idea.rules), getattr(idea, "fav", "") or e.fav
                 return e
         e = JournalEntry(uuid.uuid4().hex[:10], datetime.now().isoformat(timespec="minutes"), fx.date.isoformat(), fx.league, fx.home, fx.away,
                          idea.strategy, idea.strategy_label, round(idea.score, 1), round(idea.calibrated_hit_prob, 3),
                          round(idea.market_price or idea.model_price, 2), round(stake_money, 2), idea.plan[0].text if idea.plan else "", note=note,
                          sport=getattr(idea, "sport", "football"), decision=getattr(idea, "decision", ""),
-                         ev_conservative=getattr(idea, "ev_conservative", None))
+                         ev_conservative=getattr(idea, "ev_conservative", None), rules=list(getattr(idea, "rules", []) or []),
+                         fav=getattr(idea, "fav", "") or "", match_id=str(idea.fixture.fixture_id or idea.fixture.label))
         self.entries.insert(0, e)
         self.save()
         return e

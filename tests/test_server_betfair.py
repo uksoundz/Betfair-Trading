@@ -226,3 +226,49 @@ def test_research_idea_is_never_placeable(srv):
         server.rt.betfair.login(force=True)
         server.rt.betfair.invalidate()
         server.rt.cache.clear()
+
+
+def test_autotrade_arm_flow_through_the_routes(srv, tmp_path):
+    server, c, ex = srv
+    server.autotrader.path = tmp_path / "autotrade.json"
+    server.autotrader.jobs = {}
+    server.autotrader.auto_start = False
+    ex.recent_refs.clear()
+    m, i = _ideas(c, "TRADE")[0]
+    body = {"date": DAY, "match_id": m["id"], "strategy": i["strategy"], "sport": "football"}
+    r = c.post("/api/betslip/place", json={**body, "confirm": True, "override": True}).json()  # placed earlier in this module: needs the override
+    assert r["ok"] and r["entry_id"], r
+    entry = r["entry_id"]
+    server.settings.autotrade = False
+    try:
+        assert c.post("/api/autotrade/preview", json={"entry_id": entry}).status_code == 403
+        server.settings.autotrade = True
+        if not r["can_autotrade"]:
+            assert c.post("/api/autotrade/preview", json={"entry_id": entry}).status_code == 400
+            return
+        p = c.post("/api/autotrade/preview", json={"entry_id": entry}).json()
+        assert p["job"]["rules_text"] and all(t.startswith("When ") for t in p["job"]["rules_text"]) and not p["job"]["simulate"]
+        assert c.post("/api/autotrade/arm", json={"entry_id": entry}).status_code == 400  # needs confirm
+        a = c.post("/api/autotrade/arm", json={"entry_id": entry, "confirm": True}).json()
+        jid = a["job"]["id"]
+        assert a["job"]["state"] == "armed" and a["job"]["bet_ids"]
+        assert c.get("/api/status").json()["autotrade"]["active"] == 1
+        assert c.get("/api/autotrade").json()["jobs"][0]["id"] == jid
+        assert c.post("/api/autotrade/disarm", json={"job_id": jid}).json()["job"]["state"] == "stopped"
+        assert c.post("/api/autotrade/stop_all").json()["stopped"] == 0
+    finally:
+        server.settings.autotrade = False
+
+
+def test_autotrade_refuses_plans_without_automated_rules(srv, tmp_path):
+    server, c, ex = srv
+    server.settings.autotrade = True
+    try:
+        e = server.journal.entries[0]
+        saved = (e.rules, e.strategy)
+        e.rules, e.strategy = [], "cs_basket"
+        r = c.post("/api/autotrade/preview", json={"entry_id": e.id})
+        assert r.status_code == 400 and "not automated" in r.json()["detail"]
+        e.rules, e.strategy = saved
+    finally:
+        server.settings.autotrade = False

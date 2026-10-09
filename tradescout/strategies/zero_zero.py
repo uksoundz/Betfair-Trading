@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ..models import MarketPrices, MatchForecast, MatchResult
 from ..model.inplay import exit_profit_lay, fair_price
+from ..autotrade import rules as R
 from .base import OrderLeg, Scenario, Strategy, StrategyResult, entry, inplay, stop
 
 EXIT_MINUTE = 70.0
@@ -41,7 +42,9 @@ class LayZeroZero(Strategy):
         ]
         return StrategyResult("Correct Score", "lay", "0-0", hit, 1 / p00, prices.correct_scores.get("0-0") if is_market else None,
                               edge, scenarios, plan, rationale,
-                              orders=[OrderLeg("CORRECT_SCORE", "0-0", "lay", round(price, 1), 1.0, "liability", "lay 0-0 pre-match", p_model=p00)])
+                              orders=[OrderLeg("CORRECT_SCORE", "0-0", "lay", round(price, 1), 1.0, "liability", "lay 0-0 pre-match", p_model=p00)],
+                              rules=[R.rule("first_goal", R.goals_at_least(1), R.hold(), "First goal: the 0-0 lay has won. Nothing to do.", final=True),
+                                     R.rule("stop70", R.all_of(R.minute_at_least(EXIT_MINUTE), R.goals_at_most(0)), R.green(0), "Still 0-0 on 70': back 0-0 to cap the loss.", final=True)])
 
     def settle(self, fc: MatchForecast, result: MatchResult) -> tuple[float, float]:
         p00 = fc.p_cs.get("0-0", 0.0)

@@ -10,3 +10,4 @@ reports/
 .venv/
 data/journal.json
 data/signals.jsonl
+data/autotrade.json

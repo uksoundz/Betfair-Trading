@@ -89,6 +89,7 @@ class StrategyResult:
     rationale: list[str]
     warnings: list[str] = field(default_factory=list)
     orders: list[OrderLeg] = field(default_factory=list)
+    rules: list[dict] = field(default_factory=list)  # in-play steps as machine rules (autotrade.rules), for armed auto-trading
 
     def __post_init__(self):
         # The plan "pays off" exactly when it ends in a scenario with positive profit. Deriving this

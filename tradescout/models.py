@@ -175,6 +175,8 @@ class TradeIdea:
     warnings: list[str] = field(default_factory=list)
     scenarios: list = field(default_factory=list)  # [{"label","prob","profit"}] every way the match can go
     orders: list = field(default_factory=list)  # [OrderLeg] the pre-match selections this plan needs
+    rules: list = field(default_factory=list)   # in-play steps as machine rules, used only when the user arms auto-trading
+    fav: str = ""                               # home | away: which side the model makes favourite (the rules refer to it)
     # --- exchange-aware assessment (value.py) ---
     decision: str = "RESEARCH"            # TRADE | NO TRADE | RESEARCH (no exchange price)
     decision_reasons: list = field(default_factory=list)

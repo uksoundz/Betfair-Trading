@@ -81,6 +81,10 @@
     </div>
     <div class="grid" id="journalSummary"></div>
     <div id="journalList"></div>
+    <h3 style="color:var(--muted);margin-top:22px">Auto-trading</h3>
+    <div class="toolbar"><button id="autoRefreshBtn" class="small">Refresh</button><button id="autoStopAll" class="small ghost danger">Stop all auto-trading</button>
+      <span class="meta" id="autoMeta">Plans you have placed and armed. TradeScout follows their in-play rules while this app is open.</span></div>
+    <div id="autoJobs"></div>
     <h3 style="color:var(--muted);margin-top:22px">Open orders on Betfair</h3>
     <div class="toolbar"><button id="openBetsBtn" class="small">Refresh open orders</button><span class="meta">Orders placed from this app that are waiting for the plan price or partly matched.</span></div>
     <div id="openBets"></div>
@@ -150,6 +154,7 @@
         <p class="meta"><b>Off</b>: review only. <b>Paper</b>: record slips in My picks. <b>Live</b>: after you confirm on screen, send a plan's lines to Betfair as limit orders at the plan price (they lapse at kick-off if unmatched). Ideas the app marks TRADE place directly; for a NO TRADE or RESEARCH idea the slip asks for your explicit override first and logs it as your call.</p>
         <label class="field">Mode <select id="betMode"><option value="off">Off (review only)</option><option value="paper">Paper (record, do not place)</option><option value="live">Live (place on Betfair after I confirm)</option></select></label>
         <label class="field">Daily cap (£ at risk per day in live mode) <input id="dailyCap" type="number" min="0" step="5"></label>
+        <label class="togglerow"><input type="checkbox" id="autotradeOn"> <span><b>Allow auto-trading of plans I arm.</b> After you place a plan, an <b>Auto-trade</b> button lets TradeScout follow that plan's in-play rules (green up, close at the stop, scale in) on your Betfair account without asking each time. Nothing is automated until you arm a specific placed plan. The app must stay open (and the computer awake) for it to act.</span></label>
         <div class="row"><button class="primary" id="saveBetting">Save</button><span class="meta" id="bettingResult"></span></div>
         <div class="meta" id="bettingInfo" style="margin-top:8px"></div>
       </div>
@@ -176,6 +181,7 @@
           Most days have few or no TRADEs. That is the system working.</li>
         <li><b>Open a plan</b> for the market, side, entry price, maximum price, stake, maximum loss, why the model sees value, what must happen, when to exit, and what to do if it goes wrong.</li>
         <li><b>Place on Betfair</b> from any plan in the Matches view (Betfair connected, Betting set to Live): the slip shows every line with the live price, you press Place, then confirm. A TRADE places directly; anything else needs the override tick-box on the slip. Placing is always your decision, one slip at a time.</li>
+        <li><b>Auto-trade</b>: with "Allow auto-trading" ticked in Settings > Betting, a placed plan in My picks gets an <b>Auto-trade</b> button. It shows the plan's in-play rules (for example: first goal, back the draw to green up; still 0-0 on 70 minutes, close), you confirm, and from kick-off TradeScout carries them out. Hedges can only reduce your worst case; a scale-in never exceeds the plan's own stake. <b>Green up now</b>, <b>Disarm</b> and <b>Stop all</b> are always there. Simulate mode runs the same rules on live prices and sends nothing. It works only while the app is open.</li>
         <li><b>Exchange prices</b> refresh themselves every minute while Betfair is connected (the countdown is next to the date). The pill at the top right says how many of the day's fixtures are priced; click it for the feed details: which fixtures the exchange could not be matched to and why, in-play or suspended matches, session and key status, and a full diagnosis.</li>
         <li><b>Track</b> picks into My picks to build a record. <b>Performance</b> shows out-of-sample strategy statistics and what the signals log has recorded.</li>
       </ol>

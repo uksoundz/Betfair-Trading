@@ -130,6 +130,8 @@ class FakeExchange:
         self.recent_refs: dict[str, float] = {}      # customerRef -> time, for DUPLICATE_TRANSACTION within 60 s
         self.catalogue_requests: list[dict] = []
         self.weight_limit = 200  # lower it (control {"weight_limit": n}) to make the exchange stricter than documented
+        self.timelines: dict[str, dict] = {}  # event id -> football timeline (Betfair in-play score service shape)
+        self.tennis_scores: dict[str, dict] = {}
         self._days: dict[str, dict] = {}
         self._lock = threading.Lock()
         self._next_id = 10_000
@@ -413,7 +415,7 @@ class FakeExchange:
                 continue
             ev_name = m["event"]["name"]
             inplay = ev_name in self.inplay
-            status = "SUSPENDED" if ev_name in self.suspend else "OPEN"
+            status = "CLOSED" if m.get("_closed") else "SUSPENDED" if ev_name in self.suspend else "OPEN"
             out.append({"marketId": mid, "isMarketDataDelayed": True, "status": status, "betDelay": 5 if inplay else 0, "bspReconciled": False, "complete": True,
                         "inplay": inplay, "numberOfWinners": 1, "numberOfRunners": len(m["runners"]), "numberOfActiveRunners": len(m["runners"]),
                         "totalMatched": m["totalMatched"], "totalAvailable": round(m["totalMatched"] * 0.1, 2), "crossMatching": True, "runnersVoidable": False,
@@ -461,6 +463,7 @@ class FakeExchange:
                      "sizeLapsed": 0.0, "sizeCancelled": 0.0, "sizeVoided": 0.0, "regulatorCode": "GIBRALTAR REGULATOR",
                      "customerStrategyRef": params.get("customerStrategyRef"), "customerRef": params.get("customerRef"),
                      "customerOrderRef": ins.get("customerOrderRef")}
+            order["_inplay"] = bool(m and m["event"]["name"] in self.inplay)
             self.orders.append(order)
             if timeout:
                 reports.append({"status": "TIMEOUT", "instruction": ins})
@@ -475,7 +478,9 @@ class FakeExchange:
     def _m_listCurrentOrders(self, params: dict) -> dict:
         refs = set(params.get("customerStrategyRefs") or [])
         mids = set(params.get("marketIds") or [])
-        rows = [o for o in self.orders if (not refs or o.get("customerStrategyRef") in refs) and (not mids or o["marketId"] in mids)]
+        bets = set(map(str, params.get("betIds") or []))
+        rows = [o for o in self.orders if (not refs or o.get("customerStrategyRef") in refs) and (not mids or o["marketId"] in mids)
+                and (not bets or o["betId"] in bets)]
         return {"currentOrders": rows, "moreAvailable": False}
 
     def _m_cancelOrders(self, params: dict) -> dict:
@@ -513,6 +518,43 @@ class FakeExchange:
             self.recent_refs.clear()
         if "reject_market_types" in body:
             self.reject_market_types = set(body["reject_market_types"] or [])
+        if "play" in body:  # football in play: {"event", "minute", "home", "away", "first_goal"}
+            pl = body["play"]
+            ev = self._event_by_name(pl["event"])
+            self._kick_off(pl["event"])
+            goals = []
+            if pl.get("first_goal"):
+                goals.append({"type": "Goal", "team": pl["first_goal"], "elapsedRegularTime": max(1, int(pl.get("minute", 1)) - 1)})
+            if pl.get("score_feed", True):
+                self.timelines[ev] = {"eventId": int(ev), "elapsedRegularTime": pl.get("minute", 1), "timeElapsed": pl.get("minute", 1), "status": "IN_PLAY",
+                                      "inPlayMatchStatus": "FirstHalf" if pl.get("minute", 1) <= 45 else "SecondHalf",
+                                      "score": {"home": {"name": "H", "score": str(pl.get("home", 0))}, "away": {"name": "A", "score": str(pl.get("away", 0))}},
+                                      "updateDetails": goals}
+            else:
+                self.timelines.pop(ev, None)
+        if "play_tennis" in body:  # {"event", "sets": [[6,3],[2,1]], "set_counts": [1, 0]}
+            pl = body["play_tennis"]
+            ev = self._event_by_name(pl["event"])
+            self._kick_off(pl["event"])
+            done = pl["sets"][:-1] if len(pl["sets"]) > 1 else []
+            cur = pl["sets"][-1]
+            self.tennis_scores[ev] = {"eventId": int(ev), "status": "IN_PLAY", "score": {
+                "home": {"sets": str(pl["set_counts"][0]), "games": str(cur[0]), "gameSequence": [str(x[0]) for x in done]},
+                "away": {"sets": str(pl["set_counts"][1]), "games": str(cur[1]), "gameSequence": [str(x[1]) for x in done]}}}
+        if "price" in body:  # {"event", "market_type", "runner", "back", "lay", "handicap"}
+            pr = body["price"]
+            for m in self._all_markets().values():
+                if m["event"]["name"] != pr["event"] or m["description"]["marketType"] != pr["market_type"]:
+                    continue
+                sel = next((r["selectionId"] for r in m["runners"] if r["runnerName"] == pr["runner"] and float(r.get("handicap") or 0) == float(pr.get("handicap", 0))), None)
+                for b in m["_book"]:
+                    if b["selectionId"] == sel and float(b.get("handicap") or 0) == float(pr.get("handicap", 0)):
+                        b["ex"]["availableToBack"] = [{"price": pr["back"], "size": 500.0}] if pr.get("back") else []
+                        b["ex"]["availableToLay"] = [{"price": pr["lay"], "size": 500.0}] if pr.get("lay") else []
+        if "close" in body:
+            for m in self._all_markets().values():
+                if m["event"]["name"] == body["close"]:
+                    m["_closed"] = True
         if "weight_limit" in body:
             self.weight_limit = int(body["weight_limit"])
         if "timeout_market_types" in body:
@@ -520,6 +562,24 @@ class FakeExchange:
         if body.get("reset_calls"):
             self.calls.clear()
         return self.state()
+
+    def _event_by_name(self, name: str) -> str:
+        for m in self._all_markets().values():
+            if m["event"]["name"] == name:
+                return m["_event"]
+        raise KeyError(name)
+
+    def _kick_off(self, name: str) -> None:
+        """The event turns in play: start time moves into the past and unmatched LAPSE orders lapse."""
+        self.inplay.add(name)
+        for m in self._all_markets().values():
+            if m["event"]["name"] == name:
+                orig = m.setdefault("_start_orig", m["marketStartTime"])
+                m["marketStartTime"] = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                m["description"]["marketTime"] = m["marketStartTime"]
+                for o in self.orders:
+                    if o["marketId"] == m["marketId"] and o["sizeRemaining"] > 0 and o.get("_placed_pre", True) and o["persistenceType"] == "LAPSE" and not o.get("_inplay"):
+                        o["sizeLapsed"], o["sizeRemaining"], o["status"] = o["sizeRemaining"], 0.0, "EXECUTION_COMPLETE"
 
     def state(self) -> dict:
         return {"calls": dict(self.calls), "logins": self.logins, "orders": self.orders, "fail_login": self.fail_login, "inplay": sorted(self.inplay),
@@ -547,6 +607,12 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/__state"):
             return self._send(self.exchange.state())
+        if self.path.startswith("/inplayservice/v1/eventTimelines") or self.path.startswith("/inplayservice/v1/scores"):
+            from urllib.parse import urlparse
+            q = parse_qs(urlparse(self.path).query)
+            ids = (q.get("eventIds") or [""])[0].split(",")
+            src = self.exchange.timelines if "eventTimelines" in self.path else self.exchange.tennis_scores
+            return self._send([src[i] for i in ids if i in src])
         if self.path.startswith("/api/keepAlive"):
             return self._send(self.exchange.keep_alive(self.headers.get("X-Authentication"), self.headers.get("X-Application", "")))
         self._send({"error": "not found"}, 404)
